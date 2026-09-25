@@ -1,0 +1,1854 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>怡亨選酒小幫手</title>
+    
+    <!-- 載入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 設定 Tailwind 主題色與字體 -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'km-white': '#F9F6F0',   // 米白 (背景)
+                        'km-blue': '#1A2F4C',    // 深藍 (主色/文字)
+                        'km-gold': '#C5A059',    // 金色 (輔助/裝飾)
+                        'km-gold-light': '#E8D5A5', 
+                        'km-red': '#A63C30',     // 磚紅 (強調/標籤)
+                        'km-red-light': '#D98C82',
+                        'km-gray': '#E2DFD8',    // 邊框與分隔線
+                        'line-green': '#06C755'  // LINE 官方綠
+                    },
+                    fontFamily: {
+                        'sans': ['"Noto Sans TC"', 'Inter', 'sans-serif'],
+                        'serif': ['"Noto Serif TC"', 'serif']
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- 載入 Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@500;700&display=swap" rel="stylesheet">
+    
+    <!-- 載入 React 相關函式庫 -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- 載入 Babel 以解析 JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Firebase 雲端資料同步服務 -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import {
+            getAuth,
+            signInWithEmailAndPassword,
+            signOut,
+            onAuthStateChanged
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import {
+            getFirestore,
+            doc,
+            setDoc,
+            onSnapshot
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Firebase Web App 設定
+        const firebaseConfig = {
+            apiKey: "AIzaSyBePx19LLbe0moEpt3bdFuewNvPpCunH-8",
+            authDomain: "yiheng-wine-helper.firebaseapp.com",
+            projectId: "yiheng-wine-helper",
+            storageBucket: "yiheng-wine-helper.firebasestorage.app",
+            messagingSenderId: "646676406460",
+            appId: "1:646676406460:web:fa2f5c0bf7d34e1613b0b9",
+            measurementId: "G-S01YR3RMYL"
+        };
+
+        const APP_ID = "yiheng-wine-helper";
+        const ADMIN_UID = "7cHgc6NZmRXbzypHfhKsIJKYvCo1";
+        const STORAGE_KEY = "yiheng_liquors_catalog_v1";
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        let currentUser = auth.currentUser;
+
+        // 提供 React 使用的 Firebase 操作介面
+        window.__cloudStorage = {
+            isReady: true,
+            isLocal: false,
+
+            signInAdmin: async (email, password) => {
+                try {
+                    const credential = await signInWithEmailAndPassword(auth, email, password);
+
+                    if (credential.user.uid !== ADMIN_UID) {
+                        await signOut(auth);
+                        return {
+                            success: false,
+                            error: "此帳號沒有管理員權限"
+                        };
+                    }
+
+                    currentUser = credential.user;
+                    return {
+                        success: true,
+                        user: credential.user
+                    };
+                } catch (error) {
+                    console.error("Firebase 登入失敗：", error);
+                    return {
+                        success: false,
+                        code: error.code || "",
+                        error: error.message || "登入失敗"
+                    };
+                }
+            },
+
+            signOutAdmin: async () => {
+                await signOut(auth);
+                currentUser = null;
+            },
+
+            isAdmin: () => {
+                return !!currentUser && currentUser.uid === ADMIN_UID;
+            },
+
+            saveLiquors: async (liquorsList) => {
+                if (!currentUser || currentUser.uid !== ADMIN_UID) {
+                    console.error("沒有管理員寫入權限");
+                    return false;
+                }
+
+                try {
+                    const catalogDoc = doc(
+                        db,
+                        "artifacts",
+                        APP_ID,
+                        "public",
+                        "data",
+                        "inventory",
+                        "catalog"
+                    );
+
+                    await setDoc(catalogDoc, {
+                        items: liquorsList,
+                        updatedAt: new Date().toISOString()
+                    });
+
+                    // localStorage 僅作為本機快取，不作為主要資料來源
+                    try {
+                        localStorage.setItem(STORAGE_KEY, JSON.stringify(liquorsList));
+                    } catch (e) {}
+
+                    return true;
+                } catch (error) {
+                    console.error("雲端儲存失敗：", error);
+                    return false;
+                }
+            },
+
+            subscribeLiquors: (onUpdate, onError) => {
+                const catalogDoc = doc(
+                    db,
+                    "artifacts",
+                    APP_ID,
+                    "public",
+                    "data",
+                    "inventory",
+                    "catalog"
+                );
+
+                return onSnapshot(
+                    catalogDoc,
+                    (snapshot) => {
+                        if (snapshot.exists()) {
+                            const data = snapshot.data();
+                            if (data && Array.isArray(data.items)) {
+                                try {
+                                    localStorage.setItem(STORAGE_KEY, JSON.stringify(data.items));
+                                } catch (e) {}
+                                onUpdate(data.items);
+                            }
+                        } else {
+                            // 第一次建立資料庫時尚未有 catalog 文件。
+                            // 網站仍會顯示內建/快取酒款，管理員可在後台按「同步目前資料」首次上傳。
+                            onUpdate(null);
+                        }
+                    },
+                    (error) => {
+                        console.error("Firestore 讀取失敗：", error);
+                        if (onError) onError(error);
+                    }
+                );
+            }
+        };
+
+        // 監聽 Firebase Authentication 狀態，讓 React 能在重新整理後維持管理員登入狀態
+        onAuthStateChanged(auth, (user) => {
+            currentUser = user;
+            window.dispatchEvent(new CustomEvent("firebase-auth-changed", {
+                detail: {
+                    isAdmin: !!user && user.uid === ADMIN_UID
+                }
+            }));
+        });
+
+        window.dispatchEvent(new CustomEvent("cloud-ready"));
+    </script>
+
+    <style>
+        body {
+            background-color: #F9F6F0;
+            color: #1A2F4C;
+            font-family: 'Noto Sans TC', sans-serif;
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        body::-webkit-scrollbar {
+            display: none;
+        }
+        .serif-text {
+            font-family: 'Noto Serif TC', serif;
+        }
+        .km-card {
+            background-color: #FFFFFF;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(26, 47, 76, 0.05);
+            border: 1px solid #E2DFD8;
+        }
+        .custom-checkbox input:checked + div {
+            background-color: #1A2F4C;
+            border-color: #1A2F4C;
+            color: white;
+        }
+        .custom-radio input:checked + div {
+            border-color: #C5A059;
+            background-color: #F9F6F0;
+            box-shadow: 0 0 0 1px #C5A059;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const flavorDictionary = {
+            "穀糧": { title: "穀糧香", desc: "最典型的「高粱本體味」，像熟米飯、穀物的甜香。" },
+            "麴香": { title: "麴香", desc: "比穀糧香更有發酵感，是金門高粱辨識度很高的一類。" },
+            "蜜餞": { title: "梅子蜜餞", desc: "帶有青梅、烏梅、話梅等果乾氣息，常帶酸、甜、鹹交錯感。" },
+            "鮮果": { title: "梨瓜果香", desc: "帶有水梨、甜瓜、青蘋果等新鮮水果香，讓酒顯得清甜、年輕、活潑。" },
+            "花蜜": { title: "花蜜甜香", desc: "帶有白花、蜂蜜的氣息，屬於柔和、芳香的雅致甜感。" },
+            "醬陳": { title: "醬陳香", desc: "常見於有年份或熟陳酒，帶有老酒香與窖香，風格沉穩厚實。" },
+            "草本": { title: "草本藥材", desc: "老酒容易散發此氣味（如甘草、人蔘），常伴隨微苦、回甘。" },
+            "木質": { title: "木質烘焙", desc: "陳年或特窖產品特別明顯，帶有檀香或杉木、焦糖等延伸香氣。" }
+        };
+
+        const PRESET_FLAVORS = ["穀糧", "麴香", "蜜餞", "鮮果", "花蜜", "醬陳", "草本", "木質"];
+        const PRESET_TASTES = ["甘冽", "滑順", "綿甜", "醇厚", "爽淨", "回甘有勁", "微酸生津", "圓潤柔和", "強勁有力"];
+
+        const initialLiquors = [
+            {
+                id: "L001", name: "58度白金龍(白標)", price: 440, abv: 58, volume: 600, age: "無",
+                image: "https://placehold.co/300x400/F9F6F0/1A2F4C?text=58%E5%BA%A6\n%E7%99%BD%E9%87%91%E9%BE%8D", stock: true,
+                tags: { target: ["長輩", "家人", "自己"], purpose: ["送禮", "自飲", "宴客"], experience: ["偶爾喝", "常喝", "老饕"], style: ["經典", "穩重"], flavor: ["穀糧", "麴香"], taste: ["甘冽", "滑順", "回甘有勁"], collectible: false, special: false, sizeCategory: "中瓶 (500~750ml)" },
+                text: { shortIntro: "最具代表性的金門高粱，香氣濃郁，口感甘冽。", fullIntro: "俗稱「白金龍」的58度金門高粱酒，是金門酒廠最經典的代表作。採用優質高粱與小麥，純糧固態發酵。", tastingNotes: "初聞有清新的糧香，入口後強烈的酒精感帶來甘冽的刺激，滑順回甘、有勁。", story: "自1962年問世以來，超過半個世紀的配方傳承，見證了無數喜慶與團聚時刻。", reason: "經典不敗的選擇，口感甘冽滑順、回甘有勁，展現穩重的風格。" }
+            },
+            {
+                id: "L002", name: "58度白金龍(白標) 300ml", price: 235, abv: 58, volume: 300, age: "無",
+                image: "https://placehold.co/300x400/F9F6F0/1A2F4C?text=58%E5%BA%A6\n300ml", stock: true,
+                tags: { target: ["長輩", "家人", "自己"], purpose: ["自飲", "嘗鮮"], experience: ["偶爾喝", "常喝"], style: ["經典", "輕巧"], flavor: ["穀糧", "麴香"], taste: ["甘冽", "俐落"], collectible: false, special: false, sizeCategory: "小瓶 (<500ml)" },
+                text: { shortIntro: "輕巧容量，經典58度白金龍，適合獨飲或嘗鮮。", fullIntro: "經典58度白金龍的小容量版本，保留完全相同的酒液品質，更方便攜帶與單人品飲。", tastingNotes: "初聞有清新的糧香，入口後強烈的酒精感帶來甘冽的刺激，滑順回甘、有勁。", story: "為了滿足少量飲用與方便攜帶的需求而推出。", reason: "小巧容量適合不想一次開大瓶的自飲時刻，經典風味不打折。" }
+            },
+            {
+                id: "L003", name: "58度白金龍(紅標)", price: 595, abv: 58, volume: 750, age: "無",
+                image: "https://placehold.co/300x400/F9F6F0/A63C30?text=58%E5%BA%A6\n%E7%B4%85%E6%A8%99", stock: true,
+                tags: { target: ["長輩", "家人", "自己"], purpose: ["送禮", "自飲", "宴客"], experience: ["偶爾喝", "常喝", "老饕"], style: ["經典", "穩重"], flavor: ["穀糧", "麴香"], taste: ["甘冽", "醇厚", "回甘有勁"], collectible: false, special: false, sizeCategory: "中瓶 (500~750ml)" },
+                text: { shortIntro: "喜氣的紅標包裝，容量更大更適合宴客。", fullIntro: "紅標版本的58度金門高粱酒，酒體同樣經典純正，此款為地區專售，包裝增添喜氣，適合節慶與宴席。", tastingNotes: "經典穀糧香氣與發酵麴香交織，入口甘冽滑順，收尾乾淨有勁。", story: "為了迎合華人喜好紅色的傳統，特別設計的節慶宴客首選。", reason: "紅標包裝大器穩重，經典風味絕對是送禮或宴客的安全牌。" }
+            },
+            {
+                id: "L004", name: "罈裝金門高粱酒 1L", price: 1100, abv: 58, volume: 1000, age: "無",
+                image: "https://placehold.co/300x400/C5A059/1A2F4C?text=%E7%BD%88%E8%A3%9D\n1L", stock: true,
+                tags: { target: ["長輩", "主管/客戶", "自己"], purpose: ["送禮", "收藏", "宴客"], experience: ["常喝", "老饕"], style: ["體面", "霸氣", "造型"], flavor: ["穀糧", "麴香", "醬陳"], taste: ["醇厚", "圓潤", "勁冽"], collectible: true, special: true, sizeCategory: "大瓶/罈裝 (>750ml)" },
+                text: { shortIntro: "古樸典雅瓷罈裝，催陳效果極佳，送禮氣派。", fullIntro: "以金門官窯陶瓷廠鑼紋瓷罈裝盛的58度金門高粱酒。瓷罈不僅擺飾氣派，對酒液更有出色的催陳效果，經長時間存放後口感更加醇厚。", tastingNotes: "酒質晶瑩亮透，芳香優雅柔和，口感甘醇勁冽，酒體豐富協調。", story: "瓷罈裝酒是金門高粱最經典的陳放方式，深受老饕與收藏家喜愛。", reason: "氣派的瓷罈包裝非常適合送禮，且大容量具備極佳的收藏與陳放價值。" }
+            },
+            {
+                id: "L005", name: "38度金門高粱酒", price: 370, abv: 38, volume: 600, age: "無",
+                image: "https://placehold.co/300x400/F9F6F0/1A2F4C?text=38%E5%BA%A6\n%E9%AB%98%E7%B2%B1", stock: true,
+                tags: { target: ["長輩", "家人", "自己"], purpose: ["送禮", "自飲", "宴客"], experience: ["偶爾喝", "常喝"], style: ["經典", "穩重"], flavor: ["穀糧", "鮮果"], taste: ["柔順", "爽淨", "微甘"], collectible: false, special: false, sizeCategory: "中瓶 (500~750ml)" },
+                text: { shortIntro: "低酒精度，口感柔順不嗆辣，適合初學者。", fullIntro: "為了讓更多人能接受高粱酒的風味，金酒特別推出的38度版本。沒有高酒精度的辛辣感，保留了高粱特有的清香與甘冽。", tastingNotes: "香氣清淡優雅，甜果蜜香中帶點微酸，入口綿柔爽淨，沒有強烈的灼熱感，後味微甘。", story: "打破了高粱酒「很烈」的刻板印象，廣受年輕族群及女性朋友喜愛。", reason: "降低了酒精的刺激感，保留經典穀糧香氣與微酸果蜜香，十分好入口。" }
+            },
+            {
+                id: "L006", name: "戰酒黑金龍", price: 375, abv: 46, volume: 560, age: "無",
+                image: "https://placehold.co/300x400/1A2F4C/F9F6F0?text=%E6%88%B0%E9%85%92\n%E9%BB%91%E9%87%91%E9%BE%8D", stock: true,
+                tags: { target: ["家人", "朋友", "伴侶", "自己"], purpose: ["送禮", "自飲", "宴客"], experience: ["第一次喝", "偶爾喝", "常喝"], style: ["文雅", "特別"], flavor: ["鮮果", "花蜜", "蜜餞"], taste: ["綿甜", "圓潤", "滑順清爽"], collectible: false, special: false, sizeCategory: "中瓶 (500~750ml)" },
+                text: { shortIntro: "國際獲獎無數，46度黃金比例，好喝不上頭。", fullIntro: "專為現代人設計的高粱酒，調酒師精心勾兌出46度的完美平衡。既保留了高粱酒該有的勁道，又去除了過度的辛辣感。", tastingNotes: "香氣豐富協調，入口有一絲花蜜甜味，中段爆發鮮果香，整體口感綿甜圓潤、滑順清爽。", story: "多次在國際烈酒大賽中獲得金牌，證明了金門高粱酒在國際上的實力。", reason: "46度黃金比例綿甜圓潤，帶有討喜的鮮果與花蜜香，特別文雅好入口。" }
+            },
+            {
+                id: "L007", name: "戰酒黑金龍特窖陳高", price: 750, abv: 49.9, volume: 750, age: "陳高",
+                image: "https://placehold.co/300x400/C5A059/1A2F4C?text=%E7%89%B9%E7%AA%96\n%E9%99%B3%E9%AB%98", stock: true,
+                tags: { target: ["長輩", "家人", "主管/客戶", "朋友", "自己"], purpose: ["送禮", "自飲", "收藏", "宴客"], experience: ["偶爾喝", "常喝", "老饕"], style: ["穩重", "體面"], flavor: ["醬陳", "花蜜", "鮮果"], taste: ["醇厚", "綿甜", "滑順回甘"], collectible: true, special: true, sizeCategory: "中瓶 (500~750ml)" },
+                text: { shortIntro: "特窖陳釀，酒體飽滿，帶有迷人醬陳香。", fullIntro: "嚴選坑道特窖中的優質陳年酒液，49.9度的酒精度完美保留了陳高厚實的酒體與馥郁的香氣。是宴客送禮的極佳選擇。", tastingNotes: "開瓶即有沉穩的醬陳香，隨後散發出花蜜與鮮果交織的複雜香氣，入口綿甜圓潤、滑順回甘。", story: "源自金門特有的地下花崗岩坑道，時間與空間的完美結晶。", reason: "陳高特有的醬陳香氣與綿甜口感，不僅體面穩重，更深獲老饕喜愛。" }
+            }
+        ];
+
+        const quizQuestions = [
+            {
+                id: "q1",
+                title: "這瓶高粱酒是要買給誰的？",
+                type: "single",
+                field: "target",
+                options: ["長輩", "家人", "主管/客戶", "朋友", "伴侶", "自己"]
+            },
+            {
+                id: "q2",
+                title: "您的預算大約落在？",
+                subtitle: "(此為推薦的必要條件)",
+                type: "single",
+                field: "budget",
+                options: ["500 元以下", "500～1000 元", "1000～3000 元", "3000～5000 元", "5000～10000 元", "10000 元以上"]
+            },
+            {
+                id: "q3",
+                title: "偏好哪種容量大小？",
+                subtitle: "(選填：若無特別偏好可直接下一步)",
+                type: "multiple",
+                field: "sizeCategory",
+                options: ["小瓶 (<500ml)", "中瓶 (500~750ml)", "大瓶/罈裝 (>750ml)"],
+                max: 3,
+                optional: true
+            },
+            {
+                id: "q4",
+                title: "主要用途是什麼？",
+                type: "single",
+                field: "purpose",
+                options: ["送禮", "自飲", "收藏", "宴客", "紀念"]
+            },
+            {
+                id: "q5",
+                title: "對方的飲酒經驗如何？",
+                type: "single",
+                field: "experience",
+                options: ["第一次喝", "偶爾喝", "常喝", "老饕", "不知道"]
+            },
+            {
+                id: "q6",
+                title: "希望這瓶酒呈現什麼感覺？",
+                subtitle: "(可複選，最多 3 項)",
+                type: "multiple",
+                field: "style",
+                options: ["經典", "體面", "穩重", "霸氣", "文雅", "特別", "喜氣", "有故事", "造型", "金門限定"],
+                max: 3
+            }
+        ];
+
+        const checkBudgetMatch = (price, budgetStr) => {
+            switch(budgetStr) {
+                case "500 元以下": return price <= 500;
+                case "500～1000 元": return price > 500 && price <= 1000;
+                case "1000～3000 元": return price > 1000 && price <= 3000;
+                case "3000～5000 元": return price > 3000 && price <= 5000;
+                case "5000～10000 元": return price > 5000 && price <= 10000;
+                case "10000 元以上": return price > 10000;
+                default: return true;
+            }
+        };
+
+        const Button = ({ children, onClick, variant = 'primary', className = '', disabled = false, type = 'button' }) => {
+            const baseStyle = "w-full py-3 px-6 rounded-lg font-bold text-center transition-all duration-200 ease-in-out focus:outline-none";
+            const variants = {
+                primary: "bg-km-blue text-white hover:bg-opacity-90 shadow-md",
+                secondary: "bg-km-white text-km-blue border-2 border-km-blue hover:bg-gray-50",
+                gold: "bg-km-gold text-white hover:bg-opacity-90 shadow-md",
+                outline: "border border-km-gray text-gray-600 hover:bg-gray-50",
+                line: "bg-[#06C755] text-white hover:bg-[#05b04c] shadow-md"
+            };
+            const disabledStyle = disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer active:scale-[0.98]";
+            
+            return (
+                <button 
+                    type={type}
+                    onClick={onClick} 
+                    disabled={disabled}
+                    className={`${baseStyle} ${variants[variant]} ${disabledStyle} ${className}`}
+                >
+                    {children}
+                </button>
+            );
+        };
+
+        // LINE 專人諮詢專用按鈕元件
+        const LineConsultButton = ({ className = '', size = 'normal' }) => {
+            const isSmall = size === 'small';
+            return (
+                <a 
+                    href="https://lin.ee/9O8E0wy" 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className={`inline-flex items-center justify-center font-bold text-white bg-[#06C755] hover:bg-[#05b04c] transition-all duration-200 rounded-full shadow-sm hover:shadow active:scale-95 ${isSmall ? 'px-3 py-1.5 text-xs' : 'px-5 py-2.5 text-sm'} ${className}`}
+                >
+                    <svg className={`${isSmall ? 'w-3.5 h-3.5 mr-1.5' : 'w-4 h-4 mr-2'} fill-current`} viewBox="0 0 24 24">
+                        <path d="M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.63 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.63-.63h2.386c.346 0 .627.285.627.63 0 .349-.281.63-.63.63H17.61v1.125h1.755zm-3.855 3.016c0 .27-.174.51-.432.596-.064.021-.133.031-.199.031-.211 0-.391-.09-.51-.25l-2.443-3.317v2.94c0 .344-.279.629-.631.629-.346 0-.626-.285-.626-.629V8.108c0-.27.173-.51.43-.595.06-.023.136-.033.194-.033.195 0 .375.084.495.235l2.472 3.344V8.108c0-.345.281-.63.63-.63.348 0 .63.285.63.63v4.771zm-5.741 0c0 .344-.282.629-.631.629-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.63-.63.346 0 .628.285.628.63v4.771zm-2.466.629H4.917c-.345 0-.63-.285-.63-.629V8.108c0-.345.285-.63.63-.63.348 0 .63.285.63.63v4.141h1.756c.348 0 .629.283.629.63 0 .344-.282.629-.629.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.766.038 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314"/>
+                    </svg>
+                    <span>詢問專人</span>
+                </a>
+            );
+        };
+
+        const Tag = ({ text, type = 'default', onClick }) => {
+            const styles = {
+                default: "bg-gray-100 text-gray-600 border border-gray-200",
+                highlight: "bg-km-gold-light bg-opacity-30 text-km-blue border border-km-gold",
+                accent: "bg-km-red-light bg-opacity-20 text-km-red border border-km-red",
+                flavor: "bg-km-red bg-opacity-10 text-km-red border border-km-red cursor-pointer hover:bg-km-red hover:text-white transition-colors duration-200 shadow-sm",
+                taste: "bg-blue-50 text-blue-800 border border-blue-200 font-medium"
+            };
+            return (
+                <span 
+                    className={`text-xs px-2.5 py-1 rounded-md ${styles[type]} mr-2 mb-2 inline-flex items-center whitespace-nowrap`}
+                    onClick={onClick}
+                >
+                    {type === 'flavor' && <span className="mr-1 text-[11px]">👃</span>}
+                    {type === 'taste' && <span className="mr-1 text-[11px]">👅</span>}
+                    {text}
+                </span>
+            );
+        };
+
+        const FlavorModal = ({ flavorKey, onClose }) => {
+            if (!flavorKey || !flavorDictionary[flavorKey]) return null;
+            const data = flavorDictionary[flavorKey];
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100] px-4" onClick={onClose}>
+                    <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full overflow-hidden" onClick={e => e.stopPropagation()}>
+                        <div className="bg-km-blue px-6 py-4 flex justify-between items-center">
+                            <h3 className="text-xl font-serif font-bold text-km-gold-light tracking-widest">{data.title}</h3>
+                            <button onClick={onClose} className="text-white hover:text-gray-300 text-2xl leading-none">&times;</button>
+                        </div>
+                        <div className="p-6">
+                            <p className="text-gray-700 text-[15px] leading-relaxed font-medium">{data.desc}</p>
+                            <div className="mt-6 flex justify-end">
+                                <Button variant="primary" onClick={onClose} className="!w-full !py-2.5">了解</Button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const LoginModal = ({ onClose, onSuccess }) => {
+            const [email, setEmail] = React.useState('');
+            const [password, setPassword] = React.useState('');
+            const [error, setError] = React.useState('');
+            const [loading, setLoading] = React.useState(false);
+
+            const getFriendlyError = (result) => {
+                const code = result?.code || '';
+                if (code.includes('invalid-credential') || code.includes('wrong-password') || code.includes('user-not-found')) {
+                    return '帳號或密碼錯誤';
+                }
+                if (code.includes('invalid-email')) return 'Email 格式不正確';
+                if (code.includes('too-many-requests')) return '登入嘗試次數過多，請稍後再試';
+                if (result?.error === '此帳號沒有管理員權限') return result.error;
+                return '登入失敗，請確認帳號、密碼與網路連線';
+            };
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setError('');
+
+                if (!email.trim() || !password) {
+                    setError('請輸入管理員 Email 與密碼');
+                    return;
+                }
+
+                if (!window.__cloudStorage || !window.__cloudStorage.isReady) {
+                    setError('Firebase 尚未連線完成，請稍後再試');
+                    return;
+                }
+
+                setLoading(true);
+                const result = await window.__cloudStorage.signInAdmin(email.trim(), password);
+                setLoading(false);
+
+                if (result.success) {
+                    setPassword('');
+                    onSuccess(result.user);
+                } else {
+                    setError(getFriendlyError(result));
+                    setPassword('');
+                }
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[150] px-4" onClick={onClose}>
+                    <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full overflow-hidden p-6" onClick={e => e.stopPropagation()}>
+                        <h3 className="text-xl font-serif font-bold text-km-blue mb-2 text-center">管理後台登入</h3>
+                        <p className="text-sm text-gray-500 mb-5 text-center">請使用 Firebase Authentication 中建立的管理員帳號。</p>
+                        <form onSubmit={handleSubmit}>
+                            <input
+                                type="email"
+                                value={email}
+                                onChange={(e) => { setEmail(e.target.value); setError(''); }}
+                                placeholder="管理員 Email"
+                                autoComplete="username"
+                                className="w-full border-2 border-gray-200 rounded-lg p-3 mb-3 focus:border-km-blue outline-none transition-colors"
+                                autoFocus
+                            />
+                            <input
+                                type="password"
+                                value={password}
+                                onChange={(e) => { setPassword(e.target.value); setError(''); }}
+                                placeholder="管理員密碼"
+                                autoComplete="current-password"
+                                className="w-full border-2 border-gray-200 rounded-lg p-3 mb-2 focus:border-km-blue outline-none transition-colors"
+                            />
+                            {error && <p className="text-km-red text-sm mb-4 text-center">{error}</p>}
+                            <div className="mt-6 flex space-x-3">
+                                <Button variant="outline" onClick={onClose} type="button" disabled={loading}>取消</Button>
+                                <Button variant="primary" type="submit" disabled={loading}>
+                                    {loading ? '登入中...' : '登入'}
+                                </Button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            );
+        };
+
+        const Header = ({ setView, onAdminClick, cloudStatus }) => (
+            <header className="sticky top-0 z-50 bg-km-white border-b border-km-gray shadow-sm">
+                <div className="max-w-4xl mx-auto px-4 py-3 flex justify-between items-center">
+                    <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setView('home')}>
+                        <img 
+                            src="https://cdn.phototourl.com/free/2026-09-16-3e94f8d2-adfa-4360-bb16-4a2d8e67ef7c.png" 
+                            alt="怡亨 Logo" 
+                            className="h-10 w-auto"
+                            onError={(e) => {
+                                e.target.onerror = null; 
+                                e.target.src = "https://placehold.co/40x40/1A2F4C/C5A059?text=%E6%80%A1";
+                            }}
+                        />
+                        <div>
+                            <h1 className="text-xl font-serif font-bold text-km-blue tracking-wide">怡亨選酒小幫手</h1>
+                            {cloudStatus && (
+                                <div className="flex items-center space-x-1.5 text-[11px] font-medium text-gray-500">
+                                    <span className={`w-2 h-2 rounded-full ${
+                                        cloudStatus === 'synced' ? 'bg-emerald-500' :
+                                        cloudStatus === 'saving' ? 'bg-amber-500 animate-ping' :
+                                        cloudStatus === 'connecting' ? 'bg-blue-400 animate-pulse' : cloudStatus === 'empty' ? 'bg-sky-400' : 'bg-red-400'
+                                    }`}></span>
+                                    <span>
+                                        {cloudStatus === 'synced' ? '雲端已同步' :
+                                         cloudStatus === 'saving' ? '雲端儲存中...' :
+                                         cloudStatus === 'connecting' ? '連線雲端中...' : cloudStatus === 'empty' ? '雲端待初始化' : '雲端連線異常'}
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                    <button 
+                        onClick={onAdminClick}
+                        className="text-sm text-gray-500 hover:text-km-blue underline underline-offset-4"
+                    >
+                        管理後台
+                    </button>
+                </div>
+            </header>
+        );
+
+        const Home = ({ setView }) => (
+            <div className="flex flex-col items-center justify-center min-h-[80vh] px-6 text-center max-w-lg mx-auto py-10">
+                <div className="mb-8 transform hover:scale-105 transition-transform duration-300">
+                     <img 
+                        src="https://cdn.phototourl.com/free/2026-09-16-3e94f8d2-adfa-4360-bb16-4a2d8e67ef7c.png" 
+                        alt="怡亨選酒小幫手 Logo" 
+                        className="h-32 w-auto drop-shadow-md"
+                        onError={(e) => {
+                            e.target.style.display = 'none';
+                        }}
+                    />
+                </div>
+                <h2 className="text-3xl font-serif font-bold text-km-blue mb-4 leading-tight">
+                    不知道高粱怎麼選？<br/>幫你挑一瓶適合的。
+                </h2>
+                <p className="text-gray-600 mb-10 text-lg">
+                    告訴我們送誰、預算與需求，短短一分鐘，快速找到最適合你的金門高粱。
+                </p>
+                <div className="w-full space-y-4">
+                    <Button variant="primary" onClick={() => setView('quiz')} className="text-lg py-4">
+                        開始測驗選酒
+                    </Button>
+                    <Button variant="secondary" onClick={() => setView('catalog')}>
+                        直接瀏覽所有酒款
+                    </Button>
+                </div>
+            </div>
+        );
+
+        const Quiz = ({ setView, setQuizResults, liquors }) => {
+            const [step, setStep] = React.useState(0);
+            const [answers, setAnswers] = React.useState({
+                target: "",
+                budget: "",
+                sizeCategory: [],
+                purpose: "",
+                experience: "",
+                style: []
+            });
+
+            const currentQ = quizQuestions[step];
+            
+            const handleSelect = (val) => {
+                if (currentQ.type === 'single') {
+                    setAnswers({ ...answers, [currentQ.field]: val });
+                } else {
+                    const currentArr = answers[currentQ.field];
+                    if (currentArr.includes(val)) {
+                        setAnswers({ ...answers, [currentQ.field]: currentArr.filter(item => item !== val) });
+                    } else {
+                        if (currentArr.length < currentQ.max) {
+                            setAnswers({ ...answers, [currentQ.field]: [...currentArr, val] });
+                        }
+                    }
+                }
+            };
+
+            const calculateResults = () => {
+                // 1. 預算為必要條件
+                let matchedLiquors = liquors.filter(l => checkBudgetMatch(l.price, answers.budget));
+                let budgetFallback = false;
+                
+                // 1.5 容量篩選
+                if (answers.sizeCategory && answers.sizeCategory.length > 0 && matchedLiquors.length > 0) {
+                     const sizeMatched = matchedLiquors.filter(l => answers.sizeCategory.includes(l.tags.sizeCategory));
+                     if (sizeMatched.length > 0) {
+                         matchedLiquors = sizeMatched;
+                     }
+                }
+
+                if (matchedLiquors.length === 0) {
+                    matchedLiquors = [...liquors];
+                    budgetFallback = true;
+                }
+
+                // 2. 計分運算
+                const scoredLiquors = matchedLiquors.map(liquor => {
+                    let score = 0;
+                    const tags = liquor.tags;
+                    
+                    if (tags.target.includes(answers.target)) score += 5;
+                    if (tags.purpose.includes(answers.purpose)) score += 5;
+                    if (answers.experience !== "不知道" && tags.experience.includes(answers.experience)) score += 4;
+                    answers.style.forEach(s => {
+                        if (tags.style.includes(s)) score += 3;
+                    });
+                    if (answers.sizeCategory.includes(tags.sizeCategory)) {
+                        score += 4;
+                    }
+
+                    let matchReasons = [];
+                    if (tags.target.includes(answers.target)) matchReasons.push(`適合${answers.target}`);
+                    if (answers.sizeCategory.includes(tags.sizeCategory)) matchReasons.push(`符合偏好容量`);
+                    if (tags.purpose.includes(answers.purpose)) matchReasons.push(`適合${answers.purpose}`);
+                    if (answers.style.some(s => tags.style.includes(s))) {
+                        const matchedStyles = answers.style.filter(s => tags.style.includes(s));
+                        matchReasons.push(`具備${matchedStyles.join('、')}特色`);
+                    }
+
+                    let personalizedReason = liquor.text.reason;
+                    if (matchReasons.length > 0) {
+                        personalizedReason = `因為這款酒${matchReasons.join('，且')}。${liquor.text.reason}`;
+                    }
+
+                    return { ...liquor, score, personalizedReason };
+                });
+
+                scoredLiquors.sort((a, b) => b.score - a.score);
+                const top3 = scoredLiquors.slice(0, 3);
+                
+                setQuizResults({ top3, budgetFallback, answers });
+                setView('results');
+            };
+
+            const nextStep = () => {
+                if (step < quizQuestions.length - 1) {
+                    setStep(step + 1);
+                } else {
+                    calculateResults();
+                }
+            };
+
+            const prevStep = () => {
+                if (step > 0) {
+                    setStep(step - 1);
+                } else {
+                    setView('home');
+                }
+            };
+
+            const isCurrentAnswerValid = () => {
+                if (currentQ.optional) return true;
+                const val = answers[currentQ.field];
+                if (currentQ.type === 'single') return val !== "";
+                if (currentQ.type === 'multiple') return val.length > 0;
+                return false;
+            };
+
+            return (
+                <div className="max-w-md mx-auto px-4 py-8 min-h-[80vh] flex flex-col">
+                    <div className="mb-8">
+                        <div className="flex justify-between mb-2 text-sm text-gray-500">
+                            <span>問題 {step + 1} / {quizQuestions.length}</span>
+                            <span>{Math.round(((step + 1) / quizQuestions.length) * 100)}%</span>
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-2">
+                            <div className="bg-km-gold h-2 rounded-full transition-all duration-300" style={{ width: `${((step + 1) / quizQuestions.length) * 100}%` }}></div>
+                        </div>
+                    </div>
+
+                    <div className="flex-grow">
+                        <h2 className="text-2xl font-serif font-bold text-km-blue mb-2">{currentQ.title}</h2>
+                        {currentQ.subtitle && <p className="text-sm text-km-red mb-6">{currentQ.subtitle}</p>}
+
+                        <div className="space-y-3 mt-6">
+                            {currentQ.options.map(opt => {
+                                const isSelected = currentQ.type === 'single' 
+                                    ? answers[currentQ.field] === opt 
+                                    : answers[currentQ.field].includes(opt);
+                                
+                                return (
+                                    <label key={opt} className={`custom-${currentQ.type === 'single' ? 'radio' : 'checkbox'} block w-full cursor-pointer`}>
+                                        <input 
+                                            type="checkbox" 
+                                            className="hidden" 
+                                            checked={isSelected}
+                                            onChange={() => handleSelect(opt)}
+                                        />
+                                        <div className={`p-4 rounded-lg border-2 text-lg text-center font-medium transition-all duration-200
+                                            ${isSelected ? 'bg-km-blue border-km-blue text-white shadow-md' : 'bg-white border-km-gray text-gray-700 hover:border-km-gold'}`}>
+                                            {opt}
+                                        </div>
+                                    </label>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    <div className="flex space-x-4 mt-8 pt-6 border-t border-gray-200">
+                        <Button variant="outline" onClick={prevStep} className="w-1/3">上一步</Button>
+                        <Button variant="primary" onClick={nextStep} disabled={!isCurrentAnswerValid()} className="w-2/3">
+                            {step === quizQuestions.length - 1 ? '看推薦結果' : (currentQ.optional && (!answers[currentQ.field] || answers[currentQ.field].length === 0) ? '跳過' : '下一步')}
+                        </Button>
+                    </div>
+                </div>
+            );
+        };
+
+        const Results = ({ setView, results, setSelectedLiquor, onFlavorClick }) => {
+            if (!results || !results.top3 || results.top3.length === 0) {
+                return <div className="text-center py-20">發生錯誤，請重新測驗。</div>;
+            }
+
+            const getRankBadge = (index) => {
+                switch(index) {
+                    case 0: return { label: "🥇 最推薦", color: "bg-km-red text-white" };
+                    case 1: return { label: "🥈 第二推薦", color: "bg-km-gold text-white" };
+                    case 2: return { label: "✨ 特色推薦", color: "bg-km-blue text-white" };
+                    default: return { label: "推薦", color: "bg-gray-500 text-white" };
+                }
+            };
+
+            const viewDetail = (liquor) => {
+                setSelectedLiquor(liquor);
+                setView('detail');
+            };
+
+            return (
+                <div className="max-w-2xl mx-auto px-4 py-8 pb-20">
+                    <div className="text-center mb-8">
+                        <h2 className="text-2xl font-serif font-bold text-km-blue mb-3">為您找到最適合的酒款</h2>
+                        {results.budgetFallback && (
+                            <div className="bg-orange-50 border border-orange-200 text-orange-700 px-4 py-3 rounded-lg text-sm mb-4">
+                                💡 提示：您選擇的預算區間內沒有完全吻合的酒款，因此我們稍微放寬限制，推薦綜合條件最合適的好酒。
+                            </div>
+                        )}
+                        <p className="text-gray-600">
+                            根據您送給「<span className="font-bold text-km-blue">{results.answers.target}</span>」的「<span className="font-bold text-km-blue">{results.answers.purpose}</span>」需求，推薦如下：
+                        </p>
+                    </div>
+
+                    <div className="space-y-6">
+                        {results.top3.map((liquor, index) => {
+                            const badge = getRankBadge(index);
+                            return (
+                                <div key={liquor.id} className="km-card overflow-hidden relative cursor-pointer group hover:border-km-gold transition-colors" onClick={() => viewDetail(liquor)}>
+                                    <div className={`absolute top-0 left-0 px-4 py-1.5 rounded-br-xl font-bold text-sm shadow-sm z-10 ${badge.color}`}>
+                                        {badge.label}
+                                    </div>
+                                    
+                                    <div className="flex flex-col sm:flex-row">
+                                        <div className="w-full sm:w-2/5 bg-gray-100 flex justify-center items-center overflow-hidden">
+                                            <img src={liquor.image} alt={liquor.name} className="w-full h-48 sm:h-full object-cover object-center group-hover:scale-105 transition-transform duration-500"/>
+                                        </div>
+                                        <div className="w-full sm:w-3/5 p-5 flex flex-col justify-between">
+                                            <div>
+                                                <div className="flex justify-between items-start mb-2 mt-4 sm:mt-0">
+                                                    <h3 className="text-xl font-serif font-bold text-km-blue">{liquor.name}</h3>
+                                                </div>
+                                                
+                                                {/* 價格替換為詢問專人 */}
+                                                <div className="flex items-center justify-between mb-3">
+                                                    <LineConsultButton size="small" />
+                                                    <span className="text-xs text-gray-500 font-medium">({liquor.volume}ml / {liquor.abv}%)</span>
+                                                </div>
+                                                
+                                                {/* 風味與口感雙重標籤 */}
+                                                <div className="flex flex-wrap mb-3">
+                                                    {liquor.tags.flavor && liquor.tags.flavor.map(t => (
+                                                        <Tag key={`flv-${t}`} text={t} type="flavor" onClick={(e) => { e.stopPropagation(); onFlavorClick(t); }} />
+                                                    ))}
+                                                    {liquor.tags.taste && liquor.tags.taste.map(t => (
+                                                        <Tag key={`tst-${t}`} text={t} type="taste" />
+                                                    ))}
+                                                </div>
+                                                
+                                                <p className="text-sm text-gray-600 mb-4 line-clamp-2">
+                                                    {liquor.text.shortIntro}
+                                                </p>
+                                            </div>
+                                            
+                                            <div className="bg-km-white p-3 rounded-lg border border-km-gold-light border-opacity-50">
+                                                <p className="text-xs text-km-blue font-bold mb-1">推薦理由：</p>
+                                                <p className="text-xs text-gray-700 leading-relaxed">
+                                                    {liquor.personalizedReason}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    <div className="mt-10 flex flex-col space-y-4 max-w-sm mx-auto">
+                        <Button variant="primary" onClick={() => setView('catalog')}>瀏覽所有酒款</Button>
+                        <Button variant="outline" onClick={() => setView('quiz')}>重新測驗</Button>
+                    </div>
+                </div>
+            );
+        };
+
+        const Catalog = ({ setView, liquors, setSelectedLiquor, onFlavorClick }) => {
+            const [filter, setFilter] = React.useState('all');
+
+            const filteredLiquors = React.useMemo(() => {
+                if (filter === 'all') return liquors;
+                if (filter === '<1000') return liquors.filter(l => l.price < 1000);
+                if (filter === '1000+') return liquors.filter(l => l.price >= 1000);
+                if (filter === 'gift') return liquors.filter(l => l.tags.purpose.includes('送禮'));
+                return liquors;
+            }, [liquors, filter]);
+
+            const viewDetail = (liquor) => {
+                setSelectedLiquor(liquor);
+                setView('detail');
+            };
+
+            return (
+                <div className="max-w-4xl mx-auto px-4 py-8 pb-20">
+                    <div className="flex justify-between items-center mb-6">
+                        <h2 className="text-2xl font-serif font-bold text-km-blue">所有酒款</h2>
+                        <span className="text-sm text-gray-500">共 {filteredLiquors.length} 款</span>
+                    </div>
+                    
+                    <div className="flex space-x-2 overflow-x-auto pb-4 mb-4">
+                        <button onClick={() => setFilter('all')} className={`px-4 py-2 rounded-full text-sm whitespace-nowrap transition-colors ${filter === 'all' ? 'bg-km-blue text-white' : 'bg-white text-gray-600 border border-gray-300'}`}>全部</button>
+                        <button onClick={() => setFilter('<1000')} className={`px-4 py-2 rounded-full text-sm whitespace-nowrap transition-colors ${filter === '<1000' ? 'bg-km-blue text-white' : 'bg-white text-gray-600 border border-gray-300'}`}>千元內親民首選</button>
+                        <button onClick={() => setFilter('1000+')} className={`px-4 py-2 rounded-full text-sm whitespace-nowrap transition-colors ${filter === '1000+' ? 'bg-km-blue text-white' : 'bg-white text-gray-600 border border-gray-300'}`}>千元以上 / 典藏</button>
+                        <button onClick={() => setFilter('gift')} className={`px-4 py-2 rounded-full text-sm whitespace-nowrap transition-colors ${filter === 'gift' ? 'bg-km-blue text-white' : 'bg-white text-gray-600 border border-gray-300'}`}>送禮推薦</button>
+                    </div>
+
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                        {filteredLiquors.map(liquor => (
+                            <div key={liquor.id} className="km-card flex flex-col h-full cursor-pointer hover:shadow-lg transition-shadow" onClick={() => viewDetail(liquor)}>
+                                <div className="bg-gray-100 h-44 flex-shrink-0 relative">
+                                    <img src={liquor.image} alt={liquor.name} className="w-full h-full object-cover"/>
+                                    <div className="absolute bottom-2 right-2 bg-black/60 text-white text-[10px] px-2 py-0.5 rounded backdrop-blur-sm">
+                                        {liquor.volume}ml
+                                    </div>
+                                </div>
+                                <div className="p-4 flex flex-col flex-grow">
+                                    <h3 className="font-bold text-km-blue mb-2 line-clamp-1">{liquor.name}</h3>
+                                    
+                                    <div className="mb-3">
+                                        <LineConsultButton size="small" />
+                                    </div>
+
+                                    <p className="text-xs text-gray-500 mb-3 line-clamp-2 flex-grow">{liquor.text.shortIntro}</p>
+                                    
+                                    <div className="flex flex-wrap mt-auto">
+                                        {liquor.tags.flavor && liquor.tags.flavor.slice(0, 1).map(t => (
+                                            <Tag key={`c-flv-${t}`} text={t} type="flavor" onClick={(e) => { e.stopPropagation(); onFlavorClick(t); }} />
+                                        ))}
+                                        {liquor.tags.taste && liquor.tags.taste.slice(0, 1).map(t => (
+                                            <Tag key={`c-tst-${t}`} text={t} type="taste" />
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const Detail = ({ setView, liquor, onFlavorClick }) => {
+            if (!liquor) return null;
+
+            return (
+                <div className="max-w-2xl mx-auto bg-white min-h-screen pb-20 relative shadow-sm">
+                    <button 
+                        onClick={() => setView('catalog')}
+                        className="fixed top-20 left-4 z-20 w-10 h-10 bg-white/90 backdrop-blur rounded-full flex items-center justify-center shadow-md border border-gray-200 text-km-blue hover:bg-gray-100 transition-colors"
+                        title="回總覽"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                        </svg>
+                    </button>
+
+                    <div className="w-full h-80 md:h-96 bg-gray-100 relative">
+                        <img src={liquor.image} alt={liquor.name} className="w-full h-full object-cover"/>
+                    </div>
+
+                    <div className="p-6">
+                        <div className="flex flex-wrap mb-3">
+                            <Tag text={`${liquor.abv}% Vol`} type="accent" />
+                            <Tag text={`${liquor.volume}ml`} type="default" />
+                            {liquor.age && liquor.age !== "無" && <Tag text={`年份：${liquor.age}`} type="highlight" />}
+                        </div>
+                        
+                        <h2 className="text-3xl font-serif font-bold text-km-blue mb-4">{liquor.name}</h2>
+                        
+                        {/* 專人諮詢按鈕橫幅 */}
+                        <div className="mb-6 p-4 rounded-xl bg-green-50 border border-green-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div>
+                                <span className="text-xs font-bold text-green-700 uppercase tracking-wider block">專人一對一選酒服務</span>
+                                <span className="text-sm text-gray-600 font-medium">歡迎透過官方 LINE 詢問即時牌價與現貨存量</span>
+                            </div>
+                            <LineConsultButton size="normal" />
+                        </div>
+                        
+                        {/* 風味與口感專區 */}
+                        <div className="mb-6 bg-[#FDFBF7] p-4 rounded-xl border border-km-gray">
+                            <div className="mb-3">
+                                <span className="text-xs font-bold text-km-red block mb-1.5 flex items-center">
+                                    <span className="mr-1">👃</span> 風味特色 (點擊可查看說明)
+                                </span>
+                                <div className="flex flex-wrap">
+                                    {liquor.tags.flavor && liquor.tags.flavor.map(t => (
+                                        <Tag key={`d-flv-${t}`} text={t} type="flavor" onClick={() => onFlavorClick(t)} />
+                                    ))}
+                                </div>
+                            </div>
+                            <div>
+                                <span className="text-xs font-bold text-blue-800 block mb-1.5 flex items-center">
+                                    <span className="mr-1">👅</span> 口感體驗
+                                </span>
+                                <div className="flex flex-wrap">
+                                    {liquor.tags.taste && liquor.tags.taste.map(t => (
+                                        <Tag key={`d-tst-${t}`} text={t} type="taste" />
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 商品簡介與商品詳情 */}
+                        <div className="bg-km-white rounded-xl p-5 mb-8 border border-km-gold-light">
+                            <h4 className="font-bold text-km-blue mb-2 flex items-center">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1 text-km-gold" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                商品介紹
+                            </h4>
+                            <p className="text-gray-700 leading-relaxed text-sm mb-5">
+                                {liquor.text.fullIntro || liquor.text.shortIntro}
+                            </p>
+
+                            <h4 className="font-bold text-km-blue mb-2 flex items-center pt-4 border-t border-km-gray">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1 text-km-gold" viewBox="0 0 20 20" fill="currentColor">
+                                  <path fillRule="evenodd" d="M10 2a4 4 0 00-4 4v1H5a1 1 0 00-.994.89l-1 9A1 1 0 004 18h12a1 1 0 00.994-1.11l-1-9A1 1 0 0015 7h-1V6a4 4 0 00-4-4zm2 5V6a2 2 0 10-4 0v1h4zm-6 3a1 1 0 112 0 1 1 0 01-2 0zm7-1a1 1 0 100 2 1 1 0 000-2z" clipRule="evenodd" />
+                                </svg>
+                                品飲筆記 (商品詳情)
+                            </h4>
+                            <p className="text-gray-700 leading-relaxed text-sm">
+                                {liquor.text.tastingNotes}
+                            </p>
+                        </div>
+
+                        <div className="mb-8">
+                            <h3 className="text-lg font-bold text-km-blue mb-4 border-l-4 border-km-gold pl-2">適合對象與場合</h3>
+                            <div className="flex flex-wrap gap-2">
+                                {liquor.tags.target.map(t => <span key={t} className="bg-gray-100 text-gray-700 px-3 py-1 rounded-full text-sm">{t}</span>)}
+                                {liquor.tags.purpose.map(t => <span key={t} className="bg-blue-50 text-km-blue px-3 py-1 rounded-full text-sm">{t}</span>)}
+                            </div>
+                        </div>
+
+                        {liquor.text.story && (
+                            <div className="mb-8 bg-gray-50 p-5 rounded-lg">
+                                <h3 className="text-lg font-bold text-km-blue mb-2">酒款故事</h3>
+                                <p className="text-gray-600 text-sm leading-relaxed italic serif-text">
+                                    "{liquor.text.story}"
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        const TagEditor = ({ label, tags = [], onAddTag, onRemoveTag, presets = [], badgeColor = 'red' }) => {
+            const [inputValue, setInputValue] = React.useState('');
+
+            const handleKeyDown = (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (inputValue.trim()) {
+                        onAddTag(inputValue.trim());
+                        setInputValue('');
+                    }
+                }
+            };
+
+            const handleAddClick = (e) => {
+                e.preventDefault();
+                if (inputValue.trim()) {
+                    onAddTag(inputValue.trim());
+                    setInputValue('');
+                }
+            };
+
+            return (
+                <div className="mb-4">
+                    <label className="block text-sm font-bold text-gray-700 mb-1">{label}</label>
+                    
+                    {/* 目前已選標籤 */}
+                    <div className="flex flex-wrap gap-1.5 mb-2 min-h-[34px] p-2 bg-gray-50 border border-gray-200 rounded-lg">
+                        {tags.length === 0 && (
+                            <span className="text-xs text-gray-400 py-1">尚未加入任何標籤</span>
+                        )}
+                        {tags.map((tag) => (
+                            <span 
+                                key={tag} 
+                                className={`inline-flex items-center text-xs px-2.5 py-1 rounded-md font-medium ${
+                                    badgeColor === 'red' 
+                                        ? 'bg-km-red/10 text-km-red border border-km-red/30' 
+                                        : 'bg-blue-100 text-blue-800 border border-blue-200'
+                                }`}
+                            >
+                                {tag}
+                                <button 
+                                    type="button" 
+                                    onClick={() => onRemoveTag(tag)}
+                                    className="ml-1.5 text-gray-500 hover:text-red-700 font-bold leading-none"
+                                >
+                                    &times;
+                                </button>
+                            </span>
+                        ))}
+                    </div>
+
+                    {/* 輸入自訂標籤 */}
+                    <div className="flex space-x-2 mb-2">
+                        <input 
+                            type="text" 
+                            value={inputValue} 
+                            onChange={(e) => setInputValue(e.target.value)}
+                            onKeyDown={handleKeyDown}
+                            placeholder={`輸入自訂${label}後按 Enter 或點新增`}
+                            className="flex-grow border rounded-lg p-2 text-sm focus:border-km-blue outline-none"
+                        />
+                        <button 
+                            type="button"
+                            onClick={handleAddClick}
+                            className="bg-km-blue text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-opacity-90"
+                        >
+                            ＋ 新增
+                        </button>
+                    </div>
+
+                    {/* 常用標籤快速點選 */}
+                    {presets && presets.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                            <span className="text-[11px] text-gray-400 mr-1">常用推薦:</span>
+                            {presets.map((preset) => {
+                                const isAdded = tags.includes(preset);
+                                return (
+                                    <button
+                                        key={preset}
+                                        type="button"
+                                        onClick={() => isAdded ? onRemoveTag(preset) : onAddTag(preset)}
+                                        className={`text-xs px-2 py-0.5 rounded transition-colors ${
+                                            isAdded 
+                                                ? 'bg-gray-300 text-gray-700 line-through opacity-60' 
+                                                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                        }`}
+                                    >
+                                        {isAdded ? `已加 ${preset}` : `+ ${preset}`}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const Admin = ({ liquors, setLiquors, setView, onSaveToCloud, cloudStatus, onLogout }) => {
+            const [editingId, setEditingId] = React.useState(null);
+            const [editForm, setEditForm] = React.useState(null);
+            const [isAdding, setIsAdding] = React.useState(false);
+            
+            const [alertMsg, setAlertMsg] = React.useState("");
+            const [confirmDeleteId, setConfirmDeleteId] = React.useState(null);
+
+            // 拖曳排序狀態
+            const [draggedIndex, setDraggedIndex] = React.useState(null);
+            const [dragOverIndex, setDragOverIndex] = React.useState(null);
+
+            const saveAndSync = async (updatedList, message) => {
+                setLiquors(updatedList);
+                setAlertMsg("正在同步至雲端...");
+
+                if (onSaveToCloud) {
+                    const success = await onSaveToCloud(updatedList);
+                    setAlertMsg(success ? message : "雲端儲存失敗，請確認登入狀態與網路連線。");
+                } else {
+                    setAlertMsg("雲端儲存功能尚未就緒。");
+                }
+
+                setTimeout(() => setAlertMsg(""), 3500);
+            };
+
+            const handleManualSync = async () => {
+                setAlertMsg("正在把目前酒款同步到 Firestore...");
+                const success = onSaveToCloud ? await onSaveToCloud(liquors) : false;
+                setAlertMsg(success ? "目前酒款已同步到 Firestore！" : "同步失敗，請確認管理員登入與 Firestore 規則。");
+                setTimeout(() => setAlertMsg(""), 3500);
+            };
+
+            const handleDragStart = (e, index) => {
+                setDraggedIndex(index);
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", index);
+            };
+
+            const handleDragOver = (e, index) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                if (dragOverIndex !== index) {
+                    setDragOverIndex(index);
+                }
+            };
+
+            const handleDrop = (e, targetIndex) => {
+                e.preventDefault();
+                if (draggedIndex === null || draggedIndex === targetIndex) {
+                    setDraggedIndex(null);
+                    setDragOverIndex(null);
+                    return;
+                }
+                const updatedLiquors = [...liquors];
+                const [movedItem] = updatedLiquors.splice(draggedIndex, 1);
+                updatedLiquors.splice(targetIndex, 0, movedItem);
+                
+                setDraggedIndex(null);
+                setDragOverIndex(null);
+                saveAndSync(updatedLiquors, "排序已自動同步儲存至雲端！");
+            };
+
+            const handleDragEnd = () => {
+                setDraggedIndex(null);
+                setDragOverIndex(null);
+            };
+
+            const handleMove = (index, direction) => {
+                const targetIndex = index + direction;
+                if (targetIndex < 0 || targetIndex >= liquors.length) return;
+                const updatedLiquors = [...liquors];
+                const [movedItem] = updatedLiquors.splice(index, 1);
+                updatedLiquors.splice(targetIndex, 0, movedItem);
+                saveAndSync(updatedLiquors, "順序已自動同步儲存至雲端！");
+            };
+
+            const handleEdit = (liquor) => {
+                setEditingId(liquor.id);
+                const cloned = JSON.parse(JSON.stringify(liquor));
+                if (!cloned.tags) cloned.tags = {};
+                if (!cloned.tags.flavor) cloned.tags.flavor = [];
+                if (!cloned.tags.taste) cloned.tags.taste = [];
+                if (!cloned.text) cloned.text = {};
+                setEditForm(cloned);
+                setIsAdding(false);
+            };
+
+            const handleAdd = () => {
+                const newId = `L${String(liquors.length + 1).padStart(3, '0')}`;
+                setEditingId(newId);
+                setEditForm({
+                    id: newId,
+                    name: "",
+                    price: 450,
+                    abv: 58,
+                    volume: 600,
+                    age: "無",
+                    image: `https://placehold.co/300x400/F9F6F0/1A2F4C?text=New\nItem`,
+                    stock: true,
+                    tags: { 
+                        target: ["長輩", "家人", "自己"], 
+                        purpose: ["送禮", "自飲"], 
+                        experience: ["常喝"], 
+                        style: ["經典"], 
+                        flavor: ["穀糧"], 
+                        taste: ["甘冽", "滑順"],
+                        collectible: false, 
+                        special: false, 
+                        sizeCategory: "中瓶 (500~750ml)" 
+                    },
+                    text: { 
+                        shortIntro: "", 
+                        fullIntro: "", 
+                        tastingNotes: "", 
+                        story: "", 
+                        reason: "" 
+                    }
+                });
+                setIsAdding(true);
+            };
+
+            const handleSave = () => {
+                if (!editForm.name.trim()) {
+                    setAlertMsg('請填寫商品名稱');
+                    setTimeout(() => setAlertMsg(""), 3000);
+                    return;
+                }
+                if (editForm.price < 0) {
+                    setAlertMsg('價格不可為負數');
+                    setTimeout(() => setAlertMsg(""), 3000);
+                    return;
+                }
+
+                let finalSizeCat = "中瓶 (500~750ml)";
+                if (editForm.volume < 500) finalSizeCat = "小瓶 (<500ml)";
+                else if (editForm.volume > 750) finalSizeCat = "大瓶/罈裝 (>750ml)";
+                
+                const finalForm = {
+                    ...editForm,
+                    tags: {
+                        ...editForm.tags,
+                        sizeCategory: finalSizeCat
+                    }
+                };
+
+                const updatedList = isAdding 
+                    ? [...liquors, finalForm] 
+                    : liquors.map(l => l.id === finalForm.id ? finalForm : l);
+
+                setEditingId(null);
+                setEditForm(null);
+                saveAndSync(updatedList, "商品資料已成功儲存至雲端！");
+            };
+
+            const handleChange = (field, value, isNested = false, nestedCategory = null) => {
+                if (isNested) {
+                    setEditForm({
+                        ...editForm,
+                        [nestedCategory]: {
+                            ...editForm[nestedCategory],
+                            [field]: value
+                        }
+                    });
+                } else {
+                    setEditForm({ ...editForm, [field]: value });
+                }
+            };
+
+            const handleAddTag = (category, tag) => {
+                const currentList = editForm.tags[category] || [];
+                if (!currentList.includes(tag)) {
+                    setEditForm({
+                        ...editForm,
+                        tags: {
+                            ...editForm.tags,
+                            [category]: [...currentList, tag]
+                        }
+                    });
+                }
+            };
+
+            const handleRemoveTag = (category, tag) => {
+                const currentList = editForm.tags[category] || [];
+                setEditForm({
+                    ...editForm,
+                    tags: {
+                        ...editForm.tags,
+                        [category]: currentList.filter(t => t !== tag)
+                    }
+                });
+            };
+
+            const renderForm = () => (
+                <div className="bg-white p-6 md:p-8 rounded-xl shadow-lg mb-8 border-2 border-km-blue/20">
+                    <div className="flex justify-between items-center border-b pb-4 mb-6">
+                        <h3 className="text-xl font-bold font-serif text-km-blue">
+                            {isAdding ? '＋ 新增酒款' : `編輯酒款項目: ${editForm.name || editForm.id}`}
+                        </h3>
+                        <span className="text-xs bg-gray-100 text-gray-600 px-3 py-1 rounded-full font-mono">
+                            ID: {editForm.id}
+                        </span>
+                    </div>
+
+                    <div className="space-y-6">
+                        {/* 1. 基本資訊與價格 */}
+                        <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                            <h4 className="text-sm font-bold text-km-blue uppercase tracking-wider mb-3">1. 基本規格與價格</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="md:col-span-2">
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">商品名稱 *</label>
+                                    <input 
+                                        type="text" 
+                                        value={editForm.name} 
+                                        onChange={e => handleChange('name', e.target.value)} 
+                                        placeholder="如：58度白金龍"
+                                        className="w-full border rounded-lg p-2.5 focus:border-km-blue outline-none" 
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-km-red mb-1">牌價 / 售價 (NT$) *</label>
+                                    <input 
+                                        type="number" 
+                                        value={editForm.price} 
+                                        onChange={e => handleChange('price', parseInt(e.target.value) || 0)} 
+                                        className="w-full border-2 border-km-gold/60 rounded-lg p-2.5 focus:border-km-blue outline-none font-bold text-gray-800" 
+                                    />
+                                    <p className="text-[11px] text-gray-400 mt-1">※ 前台統一顯示「詢問專人」，此價格供測驗預算篩選與內部管理使用</p>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">酒精濃度 (% Vol)</label>
+                                    <input 
+                                        type="number" 
+                                        step="0.1"
+                                        value={editForm.abv} 
+                                        onChange={e => handleChange('abv', parseFloat(e.target.value) || 0)} 
+                                        className="w-full border rounded-lg p-2.5 focus:border-km-blue outline-none" 
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">容量 (ml)</label>
+                                    <input 
+                                        type="number" 
+                                        value={editForm.volume} 
+                                        onChange={e => handleChange('volume', parseInt(e.target.value) || 0)} 
+                                        className="w-full border rounded-lg p-2.5 focus:border-km-blue outline-none" 
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">年份標註</label>
+                                    <input 
+                                        type="text" 
+                                        value={editForm.age} 
+                                        onChange={e => handleChange('age', e.target.value)} 
+                                        placeholder="如：無、5年、陳高"
+                                        className="w-full border rounded-lg p-2.5 focus:border-km-blue outline-none" 
+                                    />
+                                </div>
+                                <div className="md:col-span-3">
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">商品圖片網址 (URL)</label>
+                                    <input 
+                                        type="text" 
+                                        value={editForm.image} 
+                                        onChange={e => handleChange('image', e.target.value)} 
+                                        className="w-full border rounded-lg p-2.5 focus:border-km-blue outline-none text-sm text-gray-600" 
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 2. 風味與口感標籤 */}
+                        <div className="bg-[#FFFDF9] p-4 rounded-xl border border-km-gold/40">
+                            <h4 className="text-sm font-bold text-km-blue uppercase tracking-wider mb-3">2. 風味與口感設定</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <TagEditor 
+                                    label="風味香氣標籤 (👃 風味)"
+                                    tags={editForm.tags.flavor || []}
+                                    onAddTag={(tag) => handleAddTag('flavor', tag)}
+                                    onRemoveTag={(tag) => handleRemoveTag('flavor', tag)}
+                                    presets={PRESET_FLAVORS}
+                                    badgeColor="red"
+                                />
+                                <TagEditor 
+                                    label="口感層次標籤 (👅 口感)"
+                                    tags={editForm.tags.taste || []}
+                                    onAddTag={(tag) => handleAddTag('taste', tag)}
+                                    onRemoveTag={(tag) => handleRemoveTag('taste', tag)}
+                                    presets={PRESET_TASTES}
+                                    badgeColor="blue"
+                                />
+                            </div>
+                        </div>
+
+                        {/* 3. 介紹 */}
+                        <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                            <h4 className="text-sm font-bold text-km-blue uppercase tracking-wider mb-3">3. 商品介紹 (簡短與詳細)</h4>
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">列表簡短介紹 (顯示在商品卡片上)</label>
+                                    <input 
+                                        type="text" 
+                                        value={editForm.text.shortIntro || ''} 
+                                        onChange={e => handleChange('shortIntro', e.target.value, true, 'text')} 
+                                        placeholder="建議一至兩句話扼要說明風味特質"
+                                        className="w-full border rounded-lg p-2.5 focus:border-km-blue outline-none" 
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">詳細介紹 (顯示在酒款詳情頁)</label>
+                                    <textarea 
+                                        value={editForm.text.fullIntro || ''} 
+                                        onChange={e => handleChange('fullIntro', e.target.value, true, 'text')} 
+                                        placeholder="說明釀造工藝、風味特色、定位等"
+                                        className="w-full border rounded-lg p-2.5 focus:border-km-blue outline-none h-24 text-sm"
+                                    ></textarea>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 4. 商品詳情 (品飲筆記、故事、推薦理由) */}
+                        <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                            <h4 className="text-sm font-bold text-km-blue uppercase tracking-wider mb-3">4. 商品詳情 (品飲筆記與酒款故事)</h4>
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">品飲筆記 (聞香、入口、尾韻詳情)</label>
+                                    <textarea 
+                                        value={editForm.text.tastingNotes || ''} 
+                                        onChange={e => handleChange('tastingNotes', e.target.value, true, 'text')} 
+                                        placeholder="如：初聞有清新的糧香，入口後甘冽刺激，滑順回甘..."
+                                        className="w-full border rounded-lg p-2.5 focus:border-km-blue outline-none h-20 text-sm"
+                                    ></textarea>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">酒款故事 / 歷史背景</label>
+                                    <textarea 
+                                        value={editForm.text.story || ''} 
+                                        onChange={e => handleChange('story', e.target.value, true, 'text')} 
+                                        placeholder="分享這款酒的由來、歷史或典故"
+                                        className="w-full border rounded-lg p-2.5 focus:border-km-blue outline-none h-16 text-sm"
+                                    ></textarea>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">選酒推薦理由 (測驗產生結果時使用)</label>
+                                    <textarea 
+                                        value={editForm.text.reason || ''} 
+                                        onChange={e => handleChange('reason', e.target.value, true, 'text')} 
+                                        placeholder="總結為這款酒寫一句最吸引人的推薦評語"
+                                        className="w-full border rounded-lg p-2.5 focus:border-km-blue outline-none h-16 text-sm"
+                                    ></textarea>
+                                </div>
+                                <div>
+                                    <label className="flex items-center space-x-2 cursor-pointer pt-2">
+                                        <input 
+                                            type="checkbox" 
+                                            checked={editForm.stock} 
+                                            onChange={e => handleChange('stock', e.target.checked)} 
+                                            className="w-4 h-4 text-km-blue rounded" 
+                                        />
+                                        <span className="text-sm font-bold text-gray-700">目前商品在庫存中（供推薦使用）</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="flex justify-end space-x-3 mt-8 pt-4 border-t">
+                        <Button variant="outline" onClick={() => setEditingId(null)} className="w-auto px-6">取消</Button>
+                        <Button variant="primary" onClick={handleSave} className="w-auto px-8">儲存商品資料</Button>
+                    </div>
+                </div>
+            );
+
+            return (
+                <div className="max-w-4xl mx-auto px-4 py-8 pb-20 relative">
+                    {alertMsg && (
+                        <div className="fixed top-5 left-1/2 transform -translate-x-1/2 bg-km-blue text-white px-6 py-3 rounded-xl shadow-2xl z-50 transition-all font-medium border border-km-gold">
+                            {alertMsg}
+                        </div>
+                    )}
+
+                    {confirmDeleteId && (
+                        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 px-4">
+                            <div className="bg-white p-6 rounded-xl shadow-xl max-w-sm w-full">
+                                <h3 className="text-lg font-bold mb-3 text-km-blue">確認刪除商品</h3>
+                                <p className="text-gray-600 text-sm mb-6">確定要自資料庫中移除此款高粱酒嗎？刪除後雲端亦會同步移除。</p>
+                                <div className="flex justify-end space-x-3">
+                                    <button onClick={() => setConfirmDeleteId(null)} className="px-4 py-2 border rounded-lg text-gray-600 hover:bg-gray-100 transition-colors">取消</button>
+                                    <button onClick={() => {
+                                        const updatedList = liquors.filter(l => l.id !== confirmDeleteId);
+                                        setConfirmDeleteId(null);
+                                        saveAndSync(updatedList, "商品已從雲端成功刪除！");
+                                    }} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors">確認刪除</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="flex justify-between items-center mb-6">
+                        <div>
+                            <div className="flex items-center space-x-2">
+                                <h2 className="text-2xl font-serif font-bold text-km-blue">怡亨酒品資料管理</h2>
+                                <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${
+                                    cloudStatus === 'synced' ? 'bg-emerald-100 text-emerald-800' :
+                                    cloudStatus === 'saving' ? 'bg-amber-100 text-amber-800 animate-pulse' : cloudStatus === 'empty' ? 'bg-sky-100 text-sky-800' : 'bg-red-100 text-red-700'
+                                }`}>
+                                    {cloudStatus === 'synced' ? '✓ 雲端即時同步中' : cloudStatus === 'saving' ? '⟳ 雲端同步儲存中...' : cloudStatus === 'empty' ? '尚未建立雲端資料' : cloudStatus === 'connecting' ? '雲端連線中...' : '雲端連線異常'}
+                                </span>
+                            </div>
+                            <p className="text-xs text-gray-500 mt-1">管理與維護酒款價格、風味、口感及展示順序（滑鼠拖曳或上下箭頭調整均會即時同步雲端）</p>
+                        </div>
+                        <div className="flex flex-wrap justify-end gap-2">
+                            <Button variant="outline" onClick={handleManualSync} className="w-auto py-2.5 px-4">同步目前資料</Button>
+                            <Button variant="outline" onClick={onLogout} className="w-auto py-2.5 px-4">登出</Button>
+                            <Button variant="primary" onClick={handleAdd} className="w-auto py-2.5 px-5">＋ 新增酒款</Button>
+                        </div>
+                    </div>
+
+                    {editingId && renderForm()}
+
+                    <div className="bg-white rounded-xl shadow-sm overflow-hidden border border-gray-200">
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left border-collapse">
+                                <thead>
+                                    <tr className="bg-gray-100 text-gray-700 text-xs">
+                                        <th className="p-3.5 border-b text-center w-20">排序</th>
+                                        <th className="p-3.5 border-b">圖片</th>
+                                        <th className="p-3.5 border-b">名稱 / 容量</th>
+                                        <th className="p-3.5 border-b">內部售價</th>
+                                        <th className="p-3.5 border-b">風味標籤</th>
+                                        <th className="p-3.5 border-b">口感標籤</th>
+                                        <th className="p-3.5 border-b text-center">庫存</th>
+                                        <th className="p-3.5 border-b text-right">管理操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {liquors.map((liquor, index) => {
+                                        const isDragging = draggedIndex === index;
+                                        const isOver = dragOverIndex === index;
+                                        return (
+                                            <tr 
+                                                key={liquor.id} 
+                                                draggable={!editingId}
+                                                onDragStart={(e) => handleDragStart(e, index)}
+                                                onDragOver={(e) => handleDragOver(e, index)}
+                                                onDrop={(e) => handleDrop(e, index)}
+                                                onDragEnd={handleDragEnd}
+                                                className={`border-b transition-all duration-150 select-none ${
+                                                    isDragging 
+                                                        ? 'opacity-40 bg-gray-200 border-dashed border-2 border-km-gold' 
+                                                        : isOver 
+                                                        ? 'bg-amber-50/80 border-t-2 border-km-gold shadow-sm' 
+                                                        : 'hover:bg-gray-50'
+                                                }`}
+                                            >
+                                                <td className="p-3 text-center">
+                                                    <div className="flex items-center justify-center space-x-1.5">
+                                                        <div 
+                                                            className="cursor-grab active:cursor-grabbing text-gray-400 hover:text-km-blue p-1 rounded hover:bg-gray-200/70 transition-colors" 
+                                                            title="按住拖曳調整順序"
+                                                        >
+                                                            <svg className="w-5 h-5 fill-current" viewBox="0 0 20 20">
+                                                                <path d="M7 4a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0zM7 16a2 2 0 11-4 0 2 2 0 014 0zM17 4a2 2 0 11-4 0 2 2 0 014 0zM17 10a2 2 0 11-4 0 2 2 0 014 0zM17 16a2 2 0 11-4 0 2 2 0 014 0z" />
+                                                            </svg>
+                                                        </div>
+                                                        <div className="flex flex-col">
+                                                            <button 
+                                                                type="button"
+                                                                onClick={(e) => { e.stopPropagation(); handleMove(index, -1); }}
+                                                                disabled={index === 0}
+                                                                className="text-gray-400 hover:text-km-blue disabled:opacity-20 text-[10px] leading-tight px-1 py-0.5 rounded hover:bg-gray-100"
+                                                                title="上移"
+                                                            >
+                                                                ▲
+                                                            </button>
+                                                            <button 
+                                                                type="button"
+                                                                onClick={(e) => { e.stopPropagation(); handleMove(index, 1); }}
+                                                                disabled={index === liquors.length - 1}
+                                                                className="text-gray-400 hover:text-km-blue disabled:opacity-20 text-[10px] leading-tight px-1 py-0.5 rounded hover:bg-gray-100"
+                                                                title="下移"
+                                                            >
+                                                                ▼
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <td className="p-3">
+                                                    <img src={liquor.image} alt={liquor.name} className="w-12 h-12 object-cover rounded-lg shadow-sm" />
+                                                </td>
+                                                <td className="p-3">
+                                                    <div className="font-bold text-km-blue text-sm">{liquor.name}</div>
+                                                    <div className="text-xs text-gray-400">{liquor.volume}ml · {liquor.abv}% Vol</div>
+                                                </td>
+                                                <td className="p-3 text-sm font-mono font-bold text-gray-800">
+                                                    NT$ {liquor.price}
+                                                </td>
+                                                <td className="p-3">
+                                                    <div className="flex flex-wrap gap-1 max-w-[160px]">
+                                                        {liquor.tags.flavor && liquor.tags.flavor.map(f => (
+                                                            <span key={f} className="text-[10px] bg-red-50 text-km-red px-1.5 py-0.5 rounded border border-red-200">{f}</span>
+                                                        ))}
+                                                    </div>
+                                                </td>
+                                                <td className="p-3">
+                                                    <div className="flex flex-wrap gap-1 max-w-[160px]">
+                                                        {liquor.tags.taste && liquor.tags.taste.map(t => (
+                                                            <span key={t} className="text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded border border-blue-200">{t}</span>
+                                                        ))}
+                                                    </div>
+                                                </td>
+                                                <td className="p-3 text-center">
+                                                    <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${liquor.stock ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                                        {liquor.stock ? '有' : '無'}
+                                                    </span>
+                                                </td>
+                                                <td className="p-3 text-right whitespace-nowrap">
+                                                    <button onClick={() => handleEdit(liquor)} className="text-blue-600 hover:text-blue-800 mr-3 text-sm font-bold">編輯</button>
+                                                    <button onClick={() => setConfirmDeleteId(liquor.id)} className="text-red-500 hover:text-red-700 text-sm font-medium">刪除</button>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const AgeVerification = ({ onConfirm }) => (
+            <div className="fixed inset-0 bg-km-blue flex flex-col items-center justify-center px-4 z-[200]">
+                <div className="bg-km-white p-8 md:p-10 rounded-2xl shadow-2xl border-4 border-km-gold-light max-w-sm w-full text-center">
+                    <img 
+                        src="https://cdn.phototourl.com/free/2026-09-16-3e94f8d2-adfa-4360-bb16-4a2d8e67ef7c.png" 
+                        alt="怡亨 Logo" 
+                        className="h-24 w-auto mx-auto mb-6 drop-shadow-md"
+                        onError={(e) => {
+                            e.target.style.display = 'none';
+                        }}
+                    />
+                    <h2 className="text-2xl font-serif font-bold text-km-blue mb-4">您是否已滿18歲？</h2>
+                    <p className="text-gray-600 mb-8 text-sm leading-relaxed font-medium">
+                        本網站含酒類商品資訊，請確認您已達法定飲酒年齡。
+                    </p>
+                    <div className="flex flex-col space-y-4 w-full">
+                        <Button variant="primary" onClick={onConfirm} className="w-full py-3.5 text-lg shadow-lg">
+                            是，我已滿18歲
+                        </Button>
+                        <a href="https://youtu.be/3hoWEm_qsnI?si=gKnNjDzYXeIRqgcy" target="_top" className="block w-full">
+                            <div className="w-full py-3.5 px-6 rounded-lg font-bold text-center transition-all duration-200 ease-in-out border border-km-gray text-gray-600 hover:bg-gray-50 text-lg bg-white cursor-pointer active:scale-[0.98]">
+                                否，我未滿18歲
+                            </div>
+                        </a>
+                    </div>
+                    <p className="mt-8 text-xs text-km-red font-bold opacity-80">禁止酒駕 🥃 未滿十八歲禁止飲酒</p>
+                </div>
+            </div>
+        );
+
+        const App = () => {
+            const [isAgeVerified, setIsAgeVerified] = React.useState(false);
+            const [view, setView] = React.useState('home'); 
+            const [liquors, setLiquors] = React.useState(() => {
+                try {
+                    const localSaved = localStorage.getItem('yiheng_liquors_catalog_v1') || localStorage.getItem('yihan_liquors_catalog_v1');
+                    if (localSaved) {
+                        const parsed = JSON.parse(localSaved);
+                        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+                    }
+                } catch(e) {}
+                return initialLiquors;
+            });
+            const [quizResults, setQuizResults] = React.useState(null);
+            const [selectedLiquor, setSelectedLiquor] = React.useState(null);
+            const [activeFlavor, setActiveFlavor] = React.useState(null);
+            const [cloudStatus, setCloudStatus] = React.useState('connecting'); // 'connecting' | 'synced' | 'saving' | 'empty' | 'offline'
+
+            const [showLogin, setShowLogin] = React.useState(false);
+            const [isAdminAuth, setIsAdminAuth] = React.useState(false);
+
+            // 同步 Firebase Authentication 狀態（重新整理後仍可辨識管理員登入）
+            React.useEffect(() => {
+                const syncAuthState = () => {
+                    const isAdmin = !!(window.__cloudStorage && window.__cloudStorage.isAdmin && window.__cloudStorage.isAdmin());
+                    setIsAdminAuth(isAdmin);
+                    if (!isAdmin && view === 'admin') {
+                        setView('home');
+                    }
+                };
+
+                const handleAuthChanged = (event) => {
+                    const isAdmin = !!event.detail?.isAdmin;
+                    setIsAdminAuth(isAdmin);
+                    if (!isAdmin && view === 'admin') {
+                        setView('home');
+                    }
+                };
+
+                syncAuthState();
+                window.addEventListener('firebase-auth-changed', handleAuthChanged);
+                window.addEventListener('cloud-ready', syncAuthState);
+
+                return () => {
+                    window.removeEventListener('firebase-auth-changed', handleAuthChanged);
+                    window.removeEventListener('cloud-ready', syncAuthState);
+                };
+            }, [view]);
+
+            // 監聽並同步雲端與本地酒品資料
+            React.useEffect(() => {
+                let unsubscribe = null;
+
+                const setupSubscription = () => {
+                    if (window.__cloudStorage && window.__cloudStorage.isReady) {
+                        unsubscribe = window.__cloudStorage.subscribeLiquors(
+                            (savedItems) => {
+                                if (savedItems && savedItems.length > 0) {
+                                    setLiquors(savedItems);
+                                    setCloudStatus('synced');
+                                } else if (savedItems === null) {
+                                    // Firestore 尚無資料：先使用內建/本機快取資料，等管理員登入後手動首次同步。
+                                    setCloudStatus('empty');
+                                }
+                            },
+                            (error) => {
+                                console.error("雲端監聽失敗:", error);
+                                setCloudStatus('offline');
+                            }
+                        );
+                    }
+                };
+
+                if (window.__cloudStorage && window.__cloudStorage.isReady) {
+                    setupSubscription();
+                } else {
+                    const handleReady = () => setupSubscription();
+                    window.addEventListener('cloud-ready', handleReady);
+                    return () => {
+                        window.removeEventListener('cloud-ready', handleReady);
+                        if (unsubscribe) unsubscribe();
+                    };
+                }
+
+                return () => {
+                    if (unsubscribe) unsubscribe();
+                };
+            }, []);
+
+            React.useEffect(() => {
+                window.scrollTo(0, 0);
+            }, [view]);
+
+            const handleSaveToCloud = async (newLiquors) => {
+                try {
+                    localStorage.setItem('yiheng_liquors_catalog_v1', JSON.stringify(newLiquors));
+                } catch(e) {}
+
+                if (window.__cloudStorage && window.__cloudStorage.isReady) {
+                    setCloudStatus('saving');
+                    const success = await window.__cloudStorage.saveLiquors(newLiquors);
+                    setCloudStatus(success ? 'synced' : 'offline');
+                    return success;
+                }
+
+                setCloudStatus('offline');
+                return false;
+            };
+
+            if (!isAgeVerified) {
+                return <AgeVerification onConfirm={() => setIsAgeVerified(true)} />;
+            }
+
+            const handleAdminClick = () => {
+                const actuallyAdmin = !!(window.__cloudStorage && window.__cloudStorage.isAdmin && window.__cloudStorage.isAdmin());
+                if (isAdminAuth || actuallyAdmin) {
+                    setIsAdminAuth(true);
+                    setView('admin');
+                } else {
+                    setShowLogin(true);
+                }
+            };
+
+            const handleAdminLogout = async () => {
+                if (window.__cloudStorage && window.__cloudStorage.signOutAdmin) {
+                    await window.__cloudStorage.signOutAdmin();
+                }
+                setIsAdminAuth(false);
+                setView('home');
+            };
+
+            return (
+                <div className="min-h-screen flex flex-col relative">
+                    <Header setView={setView} onAdminClick={handleAdminClick} cloudStatus={cloudStatus} />
+                    
+                    <main className="flex-grow w-full relative">
+                        {view === 'home' && <Home setView={setView} />}
+                        {view === 'quiz' && <Quiz setView={setView} setQuizResults={setQuizResults} liquors={liquors} />}
+                        {view === 'results' && <Results setView={setView} results={quizResults} setSelectedLiquor={setSelectedLiquor} onFlavorClick={setActiveFlavor} />}
+                        {view === 'catalog' && <Catalog setView={setView} liquors={liquors} setSelectedLiquor={setSelectedLiquor} onFlavorClick={setActiveFlavor} />}
+                        {view === 'detail' && <Detail setView={setView} liquor={selectedLiquor} onFlavorClick={setActiveFlavor} />}
+                        {view === 'admin' && (
+                            <Admin 
+                                liquors={liquors} 
+                                setLiquors={setLiquors} 
+                                setView={setView} 
+                                onSaveToCloud={handleSaveToCloud}
+                                cloudStatus={cloudStatus}
+                                onLogout={handleAdminLogout}
+                            />
+                        )}
+                    </main>
+
+                    <FlavorModal flavorKey={activeFlavor} onClose={() => setActiveFlavor(null)} />
+
+                    {showLogin && (
+                        <LoginModal 
+                            onClose={() => setShowLogin(false)} 
+                            onSuccess={() => {
+                                setShowLogin(false);
+                                setIsAdminAuth(true);
+                                setView('admin');
+                            }} 
+                        />
+                    )}
+
+                    {view !== 'admin' && view !== 'quiz' && (
+                        <footer className="bg-km-blue text-km-white text-center py-6 text-sm mt-auto">
+                            <p className="opacity-70 mb-2">理性飲酒，喝酒不開車，安全有保障。</p>
+                            <p className="opacity-50">© 2026 怡亨選酒小幫手</p>
+                        </footer>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
