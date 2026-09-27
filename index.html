@@ -250,6 +250,47 @@
 
         const PRESET_FLAVORS = ["穀糧", "麴香", "蜜餞", "鮮果", "花蜜", "醬陳", "草本", "木質"];
         const PRESET_TASTES = ["甘冽", "滑順", "綿甜", "醇厚", "爽淨", "回甘有勁", "微酸生津", "圓潤柔和", "強勁有力"];
+        const PRESET_TARGETS = ["長輩", "家人", "主管/客戶", "朋友", "伴侶", "自己"];
+        const PRESET_PURPOSES = ["送禮", "自飲", "收藏", "宴客", "紀念", "嘗鮮"];
+        const PRESET_EXPERIENCES = ["第一次喝", "偶爾喝", "常喝", "老饕"];
+        const PRESET_STYLES = ["經典", "體面", "穩重", "霸氣", "文雅", "特別", "喜氣", "有故事", "造型", "金門限定", "輕巧"];
+
+        // 推薦分數只代表「符合這次需求的程度」，不是替酒本身評分。
+        const MATCH_WEIGHTS = {
+            target: 5,
+            purpose: 5,
+            experience: 4,
+            taste: 3,
+            flavor: 2,
+            style: 2,
+            sizeCategory: 1
+        };
+
+        // 部分舊資料使用相近但不完全相同的口感文字，這裡只做同義詞/近義詞匹配。
+        const TASTE_ALIASES = {
+            "甘冽": ["甘冽", "清冽"],
+            "滑順": ["滑順", "柔順", "順口"],
+            "綿甜": ["綿甜", "甘甜", "微甘"],
+            "醇厚": ["醇厚", "厚實", "飽滿"],
+            "爽淨": ["爽淨", "清爽", "俐落"],
+            "回甘有勁": ["回甘", "有勁"],
+            "微酸生津": ["微酸", "生津"],
+            "圓潤柔和": ["圓潤", "柔和"],
+            "強勁有力": ["強勁", "勁冽", "強烈"]
+        };
+
+        const getSafeTagArray = (tags, key) => Array.isArray(tags?.[key]) ? tags[key] : [];
+
+        const getMatchedSelections = (wineTags = [], selections = [], aliasMap = null) => {
+            if (!Array.isArray(wineTags) || !Array.isArray(selections) || selections.length === 0) return [];
+            return selections.filter(selection => {
+                const keywords = aliasMap?.[selection] || [selection];
+                return wineTags.some(tag => {
+                    const tagText = String(tag || '');
+                    return keywords.some(keyword => tagText.includes(keyword) || keyword.includes(tagText));
+                });
+            });
+        };
 
         const initialLiquors = [
             {
@@ -299,15 +340,15 @@
         const quizQuestions = [
             {
                 id: "q1",
-                title: "這瓶高粱酒是要買給誰的？",
+                title: "這瓶高粱酒主要是買給誰的？",
                 type: "single",
                 field: "target",
-                options: ["長輩", "家人", "主管/客戶", "朋友", "伴侶", "自己"]
+                options: PRESET_TARGETS
             },
             {
                 id: "q2",
                 title: "您的預算大約落在？",
-                subtitle: "(此為推薦的必要條件)",
+                subtitle: "(預算會優先作為篩選條件)",
                 type: "single",
                 field: "budget",
                 options: ["500 元以下", "500～1000 元", "1000～3000 元", "3000～5000 元", "5000～10000 元", "10000 元以上"]
@@ -327,11 +368,11 @@
                 title: "主要用途是什麼？",
                 type: "single",
                 field: "purpose",
-                options: ["送禮", "自飲", "收藏", "宴客", "紀念"]
+                options: ["送禮", "自飲", "收藏", "宴客", "紀念", "嘗鮮"]
             },
             {
                 id: "q5",
-                title: "對方的飲酒經驗如何？",
+                title: "飲用者平常喝高粱的經驗如何？",
                 type: "single",
                 field: "experience",
                 options: ["第一次喝", "偶爾喝", "常喝", "老饕", "不知道"]
@@ -339,11 +380,32 @@
             {
                 id: "q6",
                 title: "希望這瓶酒呈現什麼感覺？",
-                subtitle: "(可複選，最多 3 項)",
+                subtitle: "(選填，可複選，最多 3 項)",
                 type: "multiple",
                 field: "style",
                 options: ["經典", "體面", "穩重", "霸氣", "文雅", "特別", "喜氣", "有故事", "造型", "金門限定"],
-                max: 3
+                max: 3,
+                optional: true
+            },
+            {
+                id: "q7",
+                title: "有偏好的香氣方向嗎？",
+                subtitle: "(選填，可複選，最多 3 項；不確定可以跳過)",
+                type: "multiple",
+                field: "flavor",
+                options: PRESET_FLAVORS,
+                max: 3,
+                optional: true
+            },
+            {
+                id: "q8",
+                title: "比較喜歡哪種口感？",
+                subtitle: "(選填，可複選，最多 3 項；不確定可以跳過)",
+                type: "multiple",
+                field: "taste",
+                options: PRESET_TASTES,
+                max: 3,
+                optional: true
             }
         ];
 
@@ -357,6 +419,25 @@
                 case "10000 元以上": return price > 10000;
                 default: return true;
             }
+        };
+
+        const getBudgetBounds = (budgetStr) => {
+            switch(budgetStr) {
+                case "500 元以下": return [0, 500];
+                case "500～1000 元": return [500, 1000];
+                case "1000～3000 元": return [1000, 3000];
+                case "3000～5000 元": return [3000, 5000];
+                case "5000～10000 元": return [5000, 10000];
+                case "10000 元以上": return [10000, Infinity];
+                default: return [0, Infinity];
+            }
+        };
+
+        const getBudgetDistance = (price, budgetStr) => {
+            const [min, max] = getBudgetBounds(budgetStr);
+            if (price < min) return min - price;
+            if (price > max) return price - max;
+            return 0;
         };
 
         const Button = ({ children, onClick, variant = 'primary', className = '', disabled = false, type = 'button' }) => {
@@ -600,7 +681,9 @@
                 sizeCategory: [],
                 purpose: "",
                 experience: "",
-                style: []
+                style: [],
+                flavor: [],
+                taste: []
             });
 
             const currentQ = quizQuestions[step];
@@ -621,58 +704,92 @@
             };
 
             const calculateResults = () => {
-                // 1. 預算為必要條件
-                let matchedLiquors = liquors.filter(l => checkBudgetMatch(l.price, answers.budget));
+                // 1. 只推薦目前標示為有庫存/可推薦的酒款。
+                const availableLiquors = liquors.filter(l => l.stock !== false);
+
+                // 2. 預算優先作為硬篩選；若完全沒有符合，就只取價格最接近的候選酒款。
+                let matchedLiquors = availableLiquors.filter(l => checkBudgetMatch(Number(l.price) || 0, answers.budget));
                 let budgetFallback = false;
-                
-                // 1.5 容量篩選
-                if (answers.sizeCategory && answers.sizeCategory.length > 0 && matchedLiquors.length > 0) {
-                     const sizeMatched = matchedLiquors.filter(l => answers.sizeCategory.includes(l.tags.sizeCategory));
-                     if (sizeMatched.length > 0) {
-                         matchedLiquors = sizeMatched;
-                     }
-                }
 
-                if (matchedLiquors.length === 0) {
-                    matchedLiquors = [...liquors];
+                if (matchedLiquors.length === 0 && availableLiquors.length > 0) {
                     budgetFallback = true;
+                    matchedLiquors = [...availableLiquors]
+                        .sort((a, b) => getBudgetDistance(Number(a.price) || 0, answers.budget) - getBudgetDistance(Number(b.price) || 0, answers.budget))
+                        .slice(0, Math.min(8, availableLiquors.length));
                 }
 
-                // 2. 計分運算
-                const scoredLiquors = matchedLiquors.map(liquor => {
-                    let score = 0;
-                    const tags = liquor.tags;
-                    
-                    if (tags.target.includes(answers.target)) score += 5;
-                    if (tags.purpose.includes(answers.purpose)) score += 5;
-                    if (answers.experience !== "不知道" && tags.experience.includes(answers.experience)) score += 4;
-                    answers.style.forEach(s => {
-                        if (tags.style.includes(s)) score += 3;
-                    });
-                    if (answers.sizeCategory.includes(tags.sizeCategory)) {
-                        score += 4;
-                    }
+                // 3. 容量是偏好條件：有符合時才縮小候選，避免因容量造成完全沒有結果。
+                if (answers.sizeCategory.length > 0 && matchedLiquors.length > 0) {
+                    const sizeMatched = matchedLiquors.filter(l => answers.sizeCategory.includes(l.tags?.sizeCategory));
+                    if (sizeMatched.length > 0) matchedLiquors = sizeMatched;
+                }
 
-                    let matchReasons = [];
-                    if (tags.target.includes(answers.target)) matchReasons.push(`適合${answers.target}`);
-                    if (answers.sizeCategory.includes(tags.sizeCategory)) matchReasons.push(`符合偏好容量`);
-                    if (tags.purpose.includes(answers.purpose)) matchReasons.push(`適合${answers.purpose}`);
-                    if (answers.style.some(s => tags.style.includes(s))) {
-                        const matchedStyles = answers.style.filter(s => tags.style.includes(s));
+                // 4. 依「這次需求符合程度」排序，不替酒本身做主觀量化評分。
+                const scoredLiquors = matchedLiquors.map(liquor => {
+                    const tags = liquor.tags || {};
+                    const targetTags = getSafeTagArray(tags, 'target');
+                    const purposeTags = getSafeTagArray(tags, 'purpose');
+                    const experienceTags = getSafeTagArray(tags, 'experience');
+                    const styleTags = getSafeTagArray(tags, 'style');
+                    const flavorTags = getSafeTagArray(tags, 'flavor');
+                    const tasteTags = getSafeTagArray(tags, 'taste');
+
+                    const matchedStyles = getMatchedSelections(styleTags, answers.style);
+                    const matchedFlavors = getMatchedSelections(flavorTags, answers.flavor);
+                    const matchedTastes = getMatchedSelections(tasteTags, answers.taste, TASTE_ALIASES);
+
+                    let score = 0;
+                    const matchReasons = [];
+
+                    if (targetTags.includes(answers.target)) {
+                        score += MATCH_WEIGHTS.target;
+                        matchReasons.push(`適合${answers.target}`);
+                    }
+                    if (purposeTags.includes(answers.purpose)) {
+                        score += MATCH_WEIGHTS.purpose;
+                        matchReasons.push(`適合${answers.purpose}`);
+                    }
+                    if (answers.experience !== "不知道" && experienceTags.includes(answers.experience)) {
+                        score += MATCH_WEIGHTS.experience;
+                        matchReasons.push(`符合「${answers.experience}」的飲酒經驗`);
+                    }
+                    if (answers.sizeCategory.includes(tags.sizeCategory)) {
+                        score += MATCH_WEIGHTS.sizeCategory;
+                        matchReasons.push(`符合偏好容量`);
+                    }
+                    if (matchedStyles.length > 0) {
+                        score += matchedStyles.length * MATCH_WEIGHTS.style;
                         matchReasons.push(`具備${matchedStyles.join('、')}特色`);
                     }
-
-                    let personalizedReason = liquor.text.reason;
-                    if (matchReasons.length > 0) {
-                        personalizedReason = `因為這款酒${matchReasons.join('，且')}。${liquor.text.reason}`;
+                    if (matchedFlavors.length > 0) {
+                        score += matchedFlavors.length * MATCH_WEIGHTS.flavor;
+                        matchReasons.push(`香氣偏向${matchedFlavors.join('、')}`);
+                    }
+                    if (matchedTastes.length > 0) {
+                        score += matchedTastes.length * MATCH_WEIGHTS.taste;
+                        matchReasons.push(`口感符合${matchedTastes.join('、')}`);
                     }
 
-                    return { ...liquor, score, personalizedReason };
+                    const baseReason = liquor.text?.reason || liquor.text?.shortIntro || '';
+                    const personalizedReason = matchReasons.length > 0
+                        ? `這款酒${matchReasons.join('，')}。${baseReason}`
+                        : baseReason;
+
+                    return {
+                        ...liquor,
+                        score,
+                        matchCount: matchReasons.length,
+                        personalizedReason
+                    };
                 });
 
-                scoredLiquors.sort((a, b) => b.score - a.score);
+                scoredLiquors.sort((a, b) => {
+                    if (b.score !== a.score) return b.score - a.score;
+                    if (b.matchCount !== a.matchCount) return b.matchCount - a.matchCount;
+                    return 0;
+                });
+
                 const top3 = scoredLiquors.slice(0, 3);
-                
                 setQuizResults({ top3, budgetFallback, answers });
                 setView('results');
             };
@@ -776,11 +893,11 @@
                         <h2 className="text-2xl font-serif font-bold text-km-blue mb-3">為您找到最適合的酒款</h2>
                         {results.budgetFallback && (
                             <div className="bg-orange-50 border border-orange-200 text-orange-700 px-4 py-3 rounded-lg text-sm mb-4">
-                                💡 提示：您選擇的預算區間內沒有完全吻合的酒款，因此我們稍微放寬限制，推薦綜合條件最合適的好酒。
+                                💡 提示：您選擇的預算區間目前沒有可推薦酒款，因此以下改以價格最接近的酒款作為參考，並再依其他需求排序。
                             </div>
                         )}
                         <p className="text-gray-600">
-                            根據您送給「<span className="font-bold text-km-blue">{results.answers.target}</span>」的「<span className="font-bold text-km-blue">{results.answers.purpose}</span>」需求，推薦如下：
+                            根據您選擇的「<span className="font-bold text-km-blue">{results.answers.target}</span>」、「<span className="font-bold text-km-blue">{results.answers.purpose}</span>」與其他偏好，推薦如下：
                         </p>
                     </div>
 
@@ -1192,8 +1309,9 @@
                 setEditingId(liquor.id);
                 const cloned = JSON.parse(JSON.stringify(liquor));
                 if (!cloned.tags) cloned.tags = {};
-                if (!cloned.tags.flavor) cloned.tags.flavor = [];
-                if (!cloned.tags.taste) cloned.tags.taste = [];
+                ["target", "purpose", "experience", "style", "flavor", "taste"].forEach(key => {
+                    if (!Array.isArray(cloned.tags[key])) cloned.tags[key] = [];
+                });
                 if (!cloned.text) cloned.text = {};
                 setEditForm(cloned);
                 setIsAdding(false);
@@ -1404,9 +1522,51 @@
                             </div>
                         </div>
 
-                        {/* 3. 介紹 */}
+                        {/* 3. 推薦條件標籤 */}
+                        <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-200">
+                            <div className="mb-4">
+                                <h4 className="text-sm font-bold text-km-blue uppercase tracking-wider">3. 推薦條件設定</h4>
+                                <p className="text-xs text-gray-500 mt-1">這些標籤用來判斷「什麼需求下適合推薦這支酒」，不是替酒款打分。</p>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <TagEditor
+                                    label="推薦對象"
+                                    tags={editForm.tags.target || []}
+                                    onAddTag={(tag) => handleAddTag('target', tag)}
+                                    onRemoveTag={(tag) => handleRemoveTag('target', tag)}
+                                    presets={PRESET_TARGETS}
+                                    badgeColor="blue"
+                                />
+                                <TagEditor
+                                    label="推薦用途"
+                                    tags={editForm.tags.purpose || []}
+                                    onAddTag={(tag) => handleAddTag('purpose', tag)}
+                                    onRemoveTag={(tag) => handleRemoveTag('purpose', tag)}
+                                    presets={PRESET_PURPOSES}
+                                    badgeColor="blue"
+                                />
+                                <TagEditor
+                                    label="飲酒經驗"
+                                    tags={editForm.tags.experience || []}
+                                    onAddTag={(tag) => handleAddTag('experience', tag)}
+                                    onRemoveTag={(tag) => handleRemoveTag('experience', tag)}
+                                    presets={PRESET_EXPERIENCES}
+                                    badgeColor="blue"
+                                />
+                                <TagEditor
+                                    label="情境 / 形象特色"
+                                    tags={editForm.tags.style || []}
+                                    onAddTag={(tag) => handleAddTag('style', tag)}
+                                    onRemoveTag={(tag) => handleRemoveTag('style', tag)}
+                                    presets={PRESET_STYLES}
+                                    badgeColor="blue"
+                                />
+                            </div>
+                        </div>
+
+                        {/* 4. 介紹 */}
                         <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
-                            <h4 className="text-sm font-bold text-km-blue uppercase tracking-wider mb-3">3. 商品介紹 (簡短與詳細)</h4>
+                            <h4 className="text-sm font-bold text-km-blue uppercase tracking-wider mb-3">4. 商品介紹 (簡短與詳細)</h4>
                             <div className="space-y-4">
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">列表簡短介紹 (顯示在商品卡片上)</label>
@@ -1430,9 +1590,9 @@
                             </div>
                         </div>
 
-                        {/* 4. 商品詳情 (品飲筆記、故事、推薦理由) */}
+                        {/* 5. 商品詳情 (品飲筆記、故事、推薦理由) */}
                         <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
-                            <h4 className="text-sm font-bold text-km-blue uppercase tracking-wider mb-3">4. 商品詳情 (品飲筆記與酒款故事)</h4>
+                            <h4 className="text-sm font-bold text-km-blue uppercase tracking-wider mb-3">5. 商品詳情 (品飲筆記與酒款故事)</h4>
                             <div className="space-y-4">
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">品飲筆記 (聞香、入口、尾韻詳情)</label>
@@ -1519,7 +1679,7 @@
                                     {cloudStatus === 'synced' ? '✓ 雲端即時同步中' : cloudStatus === 'saving' ? '⟳ 雲端同步儲存中...' : cloudStatus === 'empty' ? '尚未建立雲端資料' : cloudStatus === 'connecting' ? '雲端連線中...' : '雲端連線異常'}
                                 </span>
                             </div>
-                            <p className="text-xs text-gray-500 mt-1">管理與維護酒款價格、風味、口感及展示順序（滑鼠拖曳或上下箭頭調整均會即時同步雲端）</p>
+                            <p className="text-xs text-gray-500 mt-1">管理與維護酒款價格、風味、口感、推薦條件及展示順序（滑鼠拖曳或上下箭頭調整均會即時同步雲端）</p>
                         </div>
                         <div className="flex flex-wrap justify-end gap-2">
                             <Button variant="outline" onClick={handleManualSync} className="w-auto py-2.5 px-4">同步目前資料</Button>
