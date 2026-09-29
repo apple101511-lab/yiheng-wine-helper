@@ -245,18 +245,40 @@
             "花蜜": { title: "花蜜甜香", desc: "帶有白花、蜂蜜的氣息，屬於柔和、芳香的雅致甜感。" },
             "醬陳": { title: "醬陳香", desc: "常見於有年份或熟陳酒，帶有老酒香與窖香，風格沉穩厚實。" },
             "草本": { title: "草本藥材", desc: "老酒容易散發此氣味（如甘草、人蔘），常伴隨微苦、回甘。" },
-            "木質": { title: "木質烘焙", desc: "陳年或特窖產品特別明顯，帶有檀香或杉木、焦糖等延伸香氣。" }
+            "木質": { title: "木質香", desc: "常見於陳年或桶陳產品，帶有橡木、檀木、杉木等乾燥木質氣息。" },
+            "香草奶油": { title: "香草奶油", desc: "常見於桶陳酒款，帶有香草莢、奶油、奶油糖般的柔和甜香。" },
+            "焦糖烘焙": { title: "焦糖烘焙", desc: "帶有焦糖、太妃糖、烤糖或烘烤氣息，常與木桶熟成風格一起出現。" },
+            "堅果": { title: "堅果香", desc: "帶有杏仁、核桃、榛果等堅果類氣息，常讓酒體顯得更成熟。" },
+            "辛香": { title: "辛香料", desc: "帶有胡椒、丁香、肉桂等辛香料般的香氣或刺激感。" },
+            "煙燻泥煤": { title: "煙燻泥煤", desc: "帶有煙燻、焦木、泥煤或炭火感，多見於特殊桶陳或跨類型風格。" },
+            "茶香": { title: "茶香", desc: "帶有紅茶、烏龍、乾燥茶葉等成熟、微澀而有層次的香氣。" }
         };
 
-        const PRESET_FLAVORS = ["穀糧", "麴香", "蜜餞", "鮮果", "花蜜", "醬陳", "草本", "木質"];
-        const PRESET_TASTES = ["甘冽", "滑順", "綿甜", "醇厚", "爽淨", "回甘有勁", "微酸生津", "圓潤柔和", "強勁有力"];
+        // 標籤字典：後台新增標籤時以這些標準詞為主，避免同義詞越長越亂。
+        const PRESET_FLAVORS = ["穀糧", "麴香", "蜜餞", "鮮果", "花蜜", "醬陳", "草本", "木質", "香草奶油", "焦糖烘焙", "堅果", "辛香", "煙燻泥煤", "茶香"];
+        const PRESET_TASTES = ["甘冽", "滑順", "圓潤", "綿甜", "醇厚", "清爽", "回甘", "有勁", "酸爽"];
         const PRESET_TARGETS = ["長輩", "家人", "主管/客戶", "朋友", "伴侶", "自己"];
         const PRESET_PURPOSES = ["送禮", "自飲", "收藏", "宴客", "紀念", "嘗鮮"];
         const PRESET_EXPERIENCES = ["第一次喝", "偶爾喝", "常喝", "老饕"];
-        const PRESET_STYLES = ["經典", "體面", "穩重", "霸氣", "文雅", "特別", "喜氣", "有故事", "造型", "金門限定", "輕巧"];
+        const PRESET_STYLES = ["經典", "體面", "穩重", "霸氣", "文雅", "特別", "喜氣", "有故事"];
+        const PRESET_ATTRIBUTES = ["紀念酒", "限量", "專供／限定", "金門限定", "聯名", "禮盒", "套組", "罈裝", "特殊造型"];
 
         const PRESET_TYPES = ["一般高粱", "陳年高粱", "桶陳", "紀念酒", "限量／特色", "禮盒", "罈裝"];
         const PRESET_STOCK_STATUSES = ["現貨", "少量", "可詢問", "暫無"];
+        const PRESET_PUBLICATION_STATUSES = ["已發布", "草稿"];
+        const BATCH_TAG_PRESETS = {
+            target: PRESET_TARGETS,
+            purpose: PRESET_PURPOSES,
+            experience: PRESET_EXPERIENCES,
+            style: PRESET_STYLES,
+            attributes: PRESET_ATTRIBUTES,
+            flavor: PRESET_FLAVORS,
+            taste: PRESET_TASTES
+        };
+        const REQUIRED_RECOMMENDATION_TAGS = ["target", "purpose", "experience", "flavor", "taste"];
+        const TAG_LABELS = { target: "推薦對象", purpose: "推薦用途", experience: "飲酒經驗", style: "形象特色", flavor: "香氣", taste: "口感", attributes: "產品屬性" };
+        const DEPRECATED_STYLE_TAGS = ["造型", "金門限定", "輕巧"];
+        const LEGACY_TASTE_TAGS = ["爽淨", "回甘有勁", "微酸生津", "圓潤柔和", "強勁有力", "柔順", "俐落", "滑順清爽", "滑順回甘"];
 
         const inferLiquorType = (liquor = {}) => {
             if (liquor.type) return liquor.type;
@@ -282,8 +304,94 @@
             return liquor.stock === false ? "暫無" : "現貨";
         };
 
+        const getPublicationStatus = (liquor = {}) => liquor.publicationStatus === "草稿" ? "草稿" : "已發布";
+        const isLiquorPublished = (liquor = {}) => getPublicationStatus(liquor) === "已發布";
+
+        // 同系列不同容量仍是不同 SKU；只同步真正適合共用的內容。
+        const copySeriesSharedFields = (target = {}, source = {}) => {
+            const targetTags = target.tags || {};
+            const sourceTags = source.tags || {};
+            return {
+                ...target,
+                type: source.type || inferLiquorType(source),
+                tags: {
+                    ...targetTags,
+                    flavor: Array.isArray(sourceTags.flavor) ? [...sourceTags.flavor] : [],
+                    taste: Array.isArray(sourceTags.taste) ? [...sourceTags.taste] : []
+                },
+                text: {
+                    ...(target.text || {}),
+                    shortIntro: source.text?.shortIntro || "",
+                    fullIntro: source.text?.fullIntro || "",
+                    tastingNotes: source.text?.tastingNotes || "",
+                    story: source.text?.story || "",
+                    reason: source.text?.reason || ""
+                }
+            };
+        };
+
+        const escapeHtml = (value = "") => String(value)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+
+        const getQrImageUrl = (url) => `https://quickchart.io/qr?text=${encodeURIComponent(url)}&size=420&margin=1&dark=1A2F4C&light=FFFFFF`;
+
+        const openPrintableQrCard = (liquor = {}) => {
+            const item = normalizeLiquor(liquor);
+            const url = getWineShareUrl(item.id);
+            const popup = window.open("", "_blank", "width=620,height=820");
+            if (!popup) {
+                window.alert("瀏覽器阻擋了酒卡視窗，請允許此網站開啟彈出式視窗後再試一次。");
+                return;
+            }
+            const flavors = (item.tags?.flavor || []).slice(0, 4).join("・") || "依酒款資料為準";
+            popup.document.open();
+            popup.document.write(`<!doctype html>
+<html lang="zh-TW"><head><meta charset="utf-8"><title>${escapeHtml(item.name)} QR 酒卡</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",sans-serif;background:#eee;margin:0;padding:24px;color:#1A2F4C}
+.card{width:360px;margin:0 auto;background:#fff;border:1px solid #ddd;border-radius:18px;padding:22px;box-shadow:0 8px 24px rgba(0,0,0,.08);text-align:center}
+.logo{font-weight:800;letter-spacing:.08em;color:#C5A059;margin-bottom:12px}
+.wine{width:210px;height:250px;object-fit:contain;background:#fafafa;border-radius:14px}
+h1{font-size:24px;line-height:1.35;margin:16px 0 8px}.meta{font-size:14px;color:#666;margin-bottom:12px}
+.tags{font-size:13px;background:#F9F6F0;border-radius:10px;padding:9px;margin:10px 0 16px}.qr{width:180px;height:180px}
+.hint{font-size:12px;color:#777;line-height:1.5}.warn{font-size:11px;color:#A63C30;margin-top:14px;font-weight:700}
+.actions{text-align:center;margin:18px}.actions button{border:0;background:#1A2F4C;color:#fff;border-radius:10px;padding:10px 18px;font-weight:700;cursor:pointer}
+@media print{body{background:#fff;padding:0}.actions{display:none}.card{box-shadow:none;border:1px solid #bbb;margin-top:10mm}}
+</style></head><body>
+<div class="actions"><button onclick="window.print()">列印酒卡</button></div>
+<div class="card"><div class="logo">怡亨選酒小幫手</div>
+<img class="wine" src="${escapeHtml(item.image || "")}" alt="${escapeHtml(item.name)}">
+<h1>${escapeHtml(item.name)}</h1>
+<div class="meta">${escapeHtml(`${item.abv}% Vol・${item.volume}ml・${item.type || "高粱酒"}`)}</div>
+<div class="tags">風味｜${escapeHtml(flavors)}</div>
+<img class="qr" src="${escapeHtml(getQrImageUrl(url))}" alt="酒款 QR Code">
+<div class="hint">掃描 QR Code 查看完整酒款介紹、加入詢問清單或分享給朋友</div>
+<div class="warn">禁止酒駕｜未滿十八歲禁止飲酒</div></div></body></html>`);
+            popup.document.close();
+        };
+
+        const getDerivedAttributes = (liquor = {}) => {
+            const tags = liquor.tags || {};
+            const attrs = Array.isArray(tags.attributes) ? [...tags.attributes] : [];
+            const push = (value) => { if (value && !attrs.includes(value)) attrs.push(value); };
+            const styles = Array.isArray(tags.style) ? tags.style : [];
+            const type = inferLiquorType(liquor);
+            if (styles.includes("金門限定")) push("金門限定");
+            if (styles.includes("造型")) push("特殊造型");
+            if (type === "紀念酒") push("紀念酒");
+            if (type === "禮盒") push("禮盒");
+            if (type === "罈裝") push("罈裝");
+            return attrs;
+        };
+
         const normalizeLiquor = (liquor = {}) => ({
             ...liquor,
+            series: typeof liquor.series === 'string' ? liquor.series : '',
+            publicationStatus: getPublicationStatus(liquor),
             type: inferLiquorType(liquor),
             stockStatus: getStockStatus(liquor),
             stock: getStockStatus(liquor) !== "暫無",
@@ -294,10 +402,50 @@
                 experience: Array.isArray(liquor.tags?.experience) ? liquor.tags.experience : [],
                 style: Array.isArray(liquor.tags?.style) ? liquor.tags.style : [],
                 flavor: Array.isArray(liquor.tags?.flavor) ? liquor.tags.flavor : [],
-                taste: Array.isArray(liquor.tags?.taste) ? liquor.tags.taste : []
+                taste: Array.isArray(liquor.tags?.taste) ? liquor.tags.taste : [],
+                attributes: getDerivedAttributes(liquor)
             },
             text: { ...(liquor.text || {}) }
         });
+
+        // 後台資料健檢：只檢查「資料是否能穩定被搜尋、推薦、分享」，不替酒款做主觀評分。
+        const getLiquorQuality = (liquor = {}, allLiquors = []) => {
+            const item = normalizeLiquor(liquor);
+            const errors = [];
+            const warnings = [];
+            const missingTags = [];
+            if (!String(item.id || '').trim()) errors.push('缺少 ID');
+            if (item.id && allLiquors.filter(x => x.id === item.id).length > 1) errors.push('ID 重複');
+            if (!String(item.name || '').trim()) errors.push('缺少酒名');
+            if (!(Number(item.abv) > 0)) errors.push('酒精度未設定');
+            if (!(Number(item.volume) > 0)) errors.push('容量未設定');
+            if (Number(item.price) < 0 || Number.isNaN(Number(item.price))) errors.push('價格格式錯誤');
+            if (!String(item.image || '').trim()) warnings.push('缺少酒款圖片');
+            else if (!/^https?:\/\//i.test(item.image) && !/^data:image\//i.test(item.image)) warnings.push('圖片網址格式可疑');
+            REQUIRED_RECOMMENDATION_TAGS.forEach(key => {
+                if (!Array.isArray(item.tags?.[key]) || item.tags[key].length === 0) missingTags.push(key);
+            });
+            const deprecatedStyles = (item.tags?.style || []).filter(x => DEPRECATED_STYLE_TAGS.includes(x));
+            const legacyTastes = (item.tags?.taste || []).filter(x => LEGACY_TASTE_TAGS.includes(x));
+            if (deprecatedStyles.length) warnings.push(`舊版形象標籤：${deprecatedStyles.join('、')}`);
+            if (legacyTastes.length) warnings.push(`口感詞建議統一：${legacyTastes.join('、')}`);
+            if (missingTags.length) warnings.push(`待補：${missingTags.map(k => TAG_LABELS[k]).join('、')}`);
+            return {
+                errors,
+                warnings,
+                missingTags,
+                complete: errors.length === 0 && missingTags.length === 0 && warnings.filter(w => !w.startsWith('舊版') && !w.startsWith('口感詞')).length === 0
+            };
+        };
+
+        const generateNextLiquorId = (liquors = []) => {
+            const used = new Set(liquors.map(x => String(x.id || '')));
+            const nums = [...used].map(id => /^L(\d+)$/.exec(id)).filter(Boolean).map(m => Number(m[1]));
+            let next = (nums.length ? Math.max(...nums) : 0) + 1;
+            let id = `L${String(next).padStart(3, '0')}`;
+            while (used.has(id)) { next += 1; id = `L${String(next).padStart(3, '0')}`; }
+            return id;
+        };
 
         const getBaseSiteUrl = () => `${window.location.origin}${window.location.pathname}`;
         const getWineShareUrl = (id) => `${getBaseSiteUrl()}?wine=${encodeURIComponent(id)}`;
@@ -343,6 +491,47 @@
             return lines;
         };
 
+        const loadCanvasImage = (src, timeoutMs = 5000) => new Promise(resolve => {
+            if (!src) return resolve(null);
+            const img = new Image();
+            let done = false;
+            const finish = (value) => { if (!done) { done = true; clearTimeout(timer); resolve(value); } };
+            const timer = setTimeout(() => finish(null), timeoutMs);
+            img.crossOrigin = 'anonymous';
+            img.onload = () => finish(img);
+            img.onerror = () => finish(null);
+            img.src = src;
+        });
+
+        const drawContainedImage = (ctx, img, x, y, w, h) => {
+            ctx.fillStyle = '#FFFFFF';
+            ctx.strokeStyle = '#E2DFD8';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.roundRect(x, y, w, h, 24);
+            ctx.fill();
+            ctx.stroke();
+            if (!img) {
+                ctx.fillStyle = '#A7A7A7';
+                ctx.font = '24px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('酒款圖片', x + w / 2, y + h / 2);
+                ctx.textAlign = 'left';
+                return;
+            }
+            const scale = Math.min((w - 24) / img.width, (h - 24) / img.height);
+            const dw = img.width * scale;
+            const dh = img.height * scale;
+            const dx = x + (w - dw) / 2;
+            const dy = y + (h - dh) / 2;
+            ctx.save();
+            ctx.beginPath();
+            ctx.roundRect(x + 1, y + 1, w - 2, h - 2, 22);
+            ctx.clip();
+            ctx.drawImage(img, dx, dy, dw, dh);
+            ctx.restore();
+        };
+
         const makeShareBlob = async ({ liquor = null, results = null }) => {
             const canvas = document.createElement('canvas');
             canvas.width = 1080;
@@ -360,91 +549,126 @@
             ctx.fillText(liquor ? '酒款分享卡' : '我的選酒結果', 72, 132);
 
             if (liquor) {
+                const normalized = normalizeLiquor(liquor);
+                const wineImg = await loadCanvasImage(normalized.image);
+                drawContainedImage(ctx, wineImg, 60, 215, 360, 500);
+
                 ctx.fillStyle = '#1A2F4C';
-                ctx.font = 'bold 54px sans-serif';
-                const titleLines = canvasWrappedLines(ctx, liquor.name, 920).slice(0, 3);
-                titleLines.forEach((line, i) => ctx.fillText(line, 72, 260 + i * 70));
-                let y = 260 + titleLines.length * 70 + 26;
-                ctx.font = '30px sans-serif';
+                ctx.font = 'bold 48px sans-serif';
+                const titleLines = canvasWrappedLines(ctx, normalized.name, 540).slice(0, 3);
+                titleLines.forEach((line, i) => ctx.fillText(line, 465, 270 + i * 62));
+                let y = 270 + titleLines.length * 62 + 24;
+                ctx.font = '27px sans-serif';
                 ctx.fillStyle = '#A63C30';
-                ctx.fillText(`${liquor.abv}% Vol  ·  ${liquor.volume}ml  ·  ${inferLiquorType(liquor)}`, 72, y);
-                y += 75;
+                ctx.fillText(`${normalized.abv}% Vol · ${normalized.volume}ml`, 465, y);
+                y += 42;
+                ctx.fillStyle = '#666';
+                ctx.font = '23px sans-serif';
+                ctx.fillText(normalized.type || '高粱酒', 465, y);
+                if (normalized.series) {
+                    y += 34;
+                    ctx.fillText(`系列：${normalized.series}`, 465, y);
+                }
+                y += 62;
                 ctx.fillStyle = '#1A2F4C';
-                ctx.font = 'bold 28px sans-serif';
-                ctx.fillText('風味', 72, y);
-                ctx.font = '28px sans-serif';
+                ctx.font = 'bold 25px sans-serif';
+                ctx.fillText('風味', 465, y);
+                ctx.font = '24px sans-serif';
                 ctx.fillStyle = '#555';
-                ctx.fillText((liquor.tags?.flavor || []).join('・') || '依酒款資料為準', 180, y);
-                y += 55;
+                const flavorLines = canvasWrappedLines(ctx, (normalized.tags?.flavor || []).join('・') || '依酒款資料為準', 410).slice(0, 2);
+                flavorLines.forEach((line, i) => ctx.fillText(line, 555, y + i * 34));
+                y += Math.max(50, flavorLines.length * 34 + 18);
                 ctx.fillStyle = '#1A2F4C';
-                ctx.font = 'bold 28px sans-serif';
-                ctx.fillText('口感', 72, y);
-                ctx.font = '28px sans-serif';
+                ctx.font = 'bold 25px sans-serif';
+                ctx.fillText('口感', 465, y);
+                ctx.font = '24px sans-serif';
                 ctx.fillStyle = '#555';
-                ctx.fillText((liquor.tags?.taste || []).join('・') || '依酒款資料為準', 180, y);
-                y += 80;
+                const tasteLines = canvasWrappedLines(ctx, (normalized.tags?.taste || []).join('・') || '依酒款資料為準', 410).slice(0, 2);
+                tasteLines.forEach((line, i) => ctx.fillText(line, 555, y + i * 34));
+
+                const boxY = 760;
                 ctx.fillStyle = '#FFFFFF';
                 ctx.strokeStyle = '#E2DFD8';
                 ctx.lineWidth = 2;
                 ctx.beginPath();
-                ctx.roundRect(60, y, 960, 360, 24);
+                ctx.roundRect(60, boxY, 960, 340, 24);
                 ctx.fill();
                 ctx.stroke();
                 ctx.fillStyle = '#1A2F4C';
                 ctx.font = 'bold 28px sans-serif';
-                ctx.fillText('酒款介紹', 92, y + 58);
-                ctx.font = '27px sans-serif';
+                ctx.fillText('推薦重點', 92, boxY + 58);
+                ctx.font = '26px sans-serif';
                 ctx.fillStyle = '#555';
-                const introLines = canvasWrappedLines(ctx, liquor.text?.shortIntro || liquor.text?.reason || '', 850).slice(0, 6);
-                introLines.forEach((line, i) => ctx.fillText(line, 92, y + 112 + i * 43));
-                const url = getWineShareUrl(liquor.id);
+                const intro = normalized.text?.reason || normalized.text?.shortIntro || '';
+                const introLines = canvasWrappedLines(ctx, intro, 850).slice(0, 6);
+                introLines.forEach((line, i) => ctx.fillText(line, 92, boxY + 112 + i * 41));
+
+                const url = getWineShareUrl(normalized.id);
                 ctx.fillStyle = '#1A2F4C';
                 ctx.font = '22px sans-serif';
-                ctx.fillText('掃描／點擊分享連結查看完整酒款資訊', 72, 1220);
+                ctx.fillText('點擊分享連結查看完整酒款資訊', 72, 1175);
                 ctx.fillStyle = '#777';
                 ctx.font = '18px sans-serif';
-                const shortUrl = url.length > 80 ? url.slice(0, 77) + '…' : url;
-                ctx.fillText(shortUrl, 72, 1260);
+                const shortUrl = url.length > 82 ? url.slice(0, 79) + '…' : url;
+                ctx.fillText(shortUrl, 72, 1215);
+                if (!wineImg) {
+                    ctx.fillStyle = '#A63C30';
+                    ctx.font = '18px sans-serif';
+                    ctx.fillText('※ 原圖來源未開放跨站讀取，分享卡暫以圖片預留區呈現', 72, 1252);
+                }
             } else if (results) {
                 ctx.fillStyle = '#1A2F4C';
                 ctx.font = 'bold 42px sans-serif';
-                ctx.fillText('為你挑出的酒款', 72, 250);
-                const items = (results.top3 || []).slice(0, 3);
+                ctx.fillText('為你挑出的酒款', 72, 245);
+                const items = (results.top3 || []).slice(0, 3).map(normalizeLiquor);
+                const imgs = await Promise.all(items.map(item => loadCanvasImage(item.image)));
                 items.forEach((item, idx) => {
-                    const top = 320 + idx * 270;
+                    const top = 300 + idx * 275;
                     ctx.fillStyle = '#FFFFFF';
                     ctx.strokeStyle = '#E2DFD8';
                     ctx.lineWidth = 2;
                     ctx.beginPath();
-                    ctx.roundRect(60, top, 960, 220, 22);
+                    ctx.roundRect(60, top, 960, 235, 22);
                     ctx.fill();
                     ctx.stroke();
+                    drawContainedImage(ctx, imgs[idx], 82, top + 22, 170, 190);
                     ctx.fillStyle = '#C5A059';
-                    ctx.font = 'bold 38px sans-serif';
-                    ctx.fillText(String(idx + 1).padStart(2, '0'), 92, top + 62);
+                    ctx.font = 'bold 30px sans-serif';
+                    ctx.fillText(String(idx + 1).padStart(2, '0'), 278, top + 50);
                     ctx.fillStyle = '#1A2F4C';
-                    ctx.font = 'bold 32px sans-serif';
-                    const nameLines = canvasWrappedLines(ctx, item.name, 760).slice(0, 2);
-                    nameLines.forEach((line, i) => ctx.fillText(line, 170, top + 58 + i * 42));
-                    ctx.font = '23px sans-serif';
+                    ctx.font = 'bold 30px sans-serif';
+                    const nameLines = canvasWrappedLines(ctx, item.name, 660).slice(0, 2);
+                    nameLines.forEach((line, i) => ctx.fillText(line, 335, top + 52 + i * 39));
+                    ctx.font = '22px sans-serif';
                     ctx.fillStyle = '#666';
-                    ctx.fillText(`${item.abv}% Vol · ${item.volume}ml · ${inferLiquorType(item)}`, 170, top + 150);
+                    ctx.fillText(`${item.abv}% Vol · ${item.volume}ml · ${item.type}`, 335, top + 142);
                     const reason = (item.matchReasons || []).slice(0, 3).join('、');
-                    ctx.fillText(reason ? `符合：${reason}` : '依你的需求綜合推薦', 170, top + 188);
+                    const reasonLines = canvasWrappedLines(ctx, reason ? `符合：${reason}` : '依你的需求綜合推薦', 640).slice(0, 2);
+                    reasonLines.forEach((line, i) => ctx.fillText(line, 335, top + 180 + i * 30));
                 });
                 ctx.fillStyle = '#1A2F4C';
                 ctx.font = '22px sans-serif';
-                ctx.fillText('完整資訊請至怡亨選酒小幫手查看', 72, 1200);
+                ctx.fillText('完整資訊請至怡亨選酒小幫手查看', 72, 1175);
                 ctx.fillStyle = '#777';
                 ctx.font = '18px sans-serif';
-                ctx.fillText(getBaseSiteUrl(), 72, 1240);
+                ctx.fillText(getBaseSiteUrl(), 72, 1215);
+                if (imgs.some(x => !x)) {
+                    ctx.fillStyle = '#A63C30';
+                    ctx.font = '18px sans-serif';
+                    ctx.fillText('※ 部分外部圖片來源可能限制分享卡載入，改用自有圖床後即可穩定顯示', 72, 1252);
+                }
             }
 
             ctx.fillStyle = '#A63C30';
             ctx.font = 'bold 20px sans-serif';
             ctx.fillText('禁止酒駕｜未滿十八歲禁止飲酒', 72, 1310);
 
-            return await new Promise(resolve => canvas.toBlob(resolve, 'image/png', 0.95));
+            try {
+                return await new Promise(resolve => canvas.toBlob(resolve, 'image/png', 0.95));
+            } catch (e) {
+                console.error('分享圖片產生失敗：', e);
+                return null;
+            }
         };
 
         const shareOrDownloadBlob = async (blob, filename, shareData = {}) => {
@@ -483,14 +707,14 @@
         // 部分舊資料使用相近但不完全相同的口感文字，這裡只做同義詞/近義詞匹配。
         const TASTE_ALIASES = {
             "甘冽": ["甘冽", "清冽"],
-            "滑順": ["滑順", "柔順", "順口"],
+            "滑順": ["滑順", "柔順", "順口", "滑順清爽", "滑順回甘"],
+            "圓潤": ["圓潤", "圓潤柔和", "柔和"],
             "綿甜": ["綿甜", "甘甜", "微甘"],
             "醇厚": ["醇厚", "厚實", "飽滿"],
-            "爽淨": ["爽淨", "清爽", "俐落"],
-            "回甘有勁": ["回甘", "有勁"],
-            "微酸生津": ["微酸", "生津"],
-            "圓潤柔和": ["圓潤", "柔和"],
-            "強勁有力": ["強勁", "勁冽", "強烈"]
+            "清爽": ["清爽", "爽淨", "俐落", "滑順清爽"],
+            "回甘": ["回甘", "回甘有勁", "滑順回甘"],
+            "有勁": ["有勁", "回甘有勁", "強勁有力", "強勁", "勁冽", "強烈"],
+            "酸爽": ["酸爽", "微酸生津", "微酸", "生津"]
         };
 
         const getSafeTagArray = (tags, key) => Array.isArray(tags?.[key]) ? tags[key] : [];
@@ -1385,7 +1609,7 @@
                 const liquor = normalizeLiquor(rawLiquor);
                 const tags = liquor.tags || {};
                 const text = liquor.text || {};
-                return [liquor.name, liquor.age, liquor.type, getStockStatus(liquor), liquor.abv, `${liquor.abv}%`, liquor.volume, `${liquor.volume}ml`, ...getArray(tags.target), ...getArray(tags.purpose), ...getArray(tags.experience), ...getArray(tags.style), ...getArray(tags.flavor), ...getArray(tags.taste), tags.sizeCategory, text.shortIntro, text.fullIntro, text.tastingNotes, text.story, text.reason].filter(Boolean).join(' ').toLowerCase();
+                return [liquor.name, liquor.series, liquor.age, liquor.type, getStockStatus(liquor), liquor.abv, `${liquor.abv}%`, liquor.volume, `${liquor.volume}ml`, ...getArray(tags.target), ...getArray(tags.purpose), ...getArray(tags.experience), ...getArray(tags.style), ...getArray(tags.attributes), ...getArray(tags.flavor), ...getArray(tags.taste), tags.sizeCategory, text.shortIntro, text.fullIntro, text.tastingNotes, text.story, text.reason].filter(Boolean).join(' ').toLowerCase();
             };
 
             const matchesCategory = (rawLiquor) => {
@@ -1403,8 +1627,8 @@
                     case 'classic': return style.includes('經典');
                     case 'aged': return liquor.type === '陳年高粱' || /(陳高|陳年|熟陳|老酒|窖藏|特窖)/.test(searchText);
                     case 'barrel': return liquor.type === '桶陳' || /(桶陳|雪莉桶|波本桶|橡木桶|威士忌桶|雙桶)/.test(searchText);
-                    case 'collectible': return !!tags.collectible || purpose.includes('收藏') || purpose.includes('紀念') || liquor.type === '紀念酒';
-                    case 'special': return !!tags.special || liquor.type === '限量／特色' || ['特別', '金門限定', '造型', '有故事'].some(tag => style.includes(tag));
+                    case 'collectible': return !!tags.collectible || purpose.includes('收藏') || purpose.includes('紀念') || liquor.type === '紀念酒' || (tags.attributes || []).some(tag => ['紀念酒', '限量'].includes(tag));
+                    case 'special': return !!tags.special || liquor.type === '限量／特色' || ['特別', '有故事'].some(tag => style.includes(tag)) || (tags.attributes || []).some(tag => ['限量', '專供／限定', '金門限定', '聯名', '特殊造型'].includes(tag));
                     default: return true;
                 }
             };
@@ -1509,6 +1733,8 @@
 
                     <div className="p-6">
                         <div className="flex flex-wrap mb-3"><Tag text={`${normalized.abv}% Vol`} type="accent" /><Tag text={`${normalized.volume}ml`} type="default" /><Tag text={normalized.type} type="default" />{normalized.age && normalized.age !== "無" && <Tag text={`年份：${normalized.age}`} type="highlight" />}</div>
+                        {normalized.series && <div className="text-xs text-gray-500 mb-2">系列：<span className="font-bold text-km-blue">{normalized.series}</span></div>}
+                        {normalized.tags?.attributes?.length > 0 && <div className="flex flex-wrap mb-3">{normalized.tags.attributes.map(t => <Tag key={`attr-${t}`} text={t} type="highlight" />)}</div>}
                         <h2 className="text-3xl font-serif font-bold text-km-blue mb-4">{normalized.name}</h2>
 
                         <div className="mb-5 flex flex-wrap gap-2">
@@ -1516,6 +1742,7 @@
                             <CompareButton liquor={normalized} isCompared={compareIds.includes(normalized.id)} onToggle={onToggleCompare} size="normal" />
                             <button type="button" onClick={handleShareLink} className="px-4 py-2.5 rounded-full border border-km-gold text-km-blue font-bold text-sm bg-white">分享連結</button>
                             <button type="button" onClick={handleShareImage} className="px-4 py-2.5 rounded-full border border-km-gold bg-km-gold text-white font-bold text-sm">產生分享圖片</button>
+                            <button type="button" onClick={() => openPrintableQrCard(normalized)} className="px-4 py-2.5 rounded-full border border-emerald-600 text-emerald-700 font-bold text-sm bg-white">QR 酒卡</button>
                         </div>
                         {shareStatus && <div className="mb-4 text-xs font-bold text-km-blue">{shareStatus}</div>}
 
@@ -1571,7 +1798,9 @@
                                 key={tag} 
                                 className={`inline-flex items-center text-xs px-2.5 py-1 rounded-md font-medium ${
                                     badgeColor === 'red' 
-                                        ? 'bg-km-red/10 text-km-red border border-km-red/30' 
+                                        ? 'bg-km-red/10 text-km-red border border-km-red/30'
+                                        : badgeColor === 'gold'
+                                        ? 'bg-amber-50 text-amber-800 border border-amber-200'
                                         : 'bg-blue-100 text-blue-800 border border-blue-200'
                                 }`}
                             >
@@ -1640,6 +1869,18 @@
             
             const [alertMsg, setAlertMsg] = React.useState("");
             const [confirmDeleteId, setConfirmDeleteId] = React.useState(null);
+            const [adminSearch, setAdminSearch] = React.useState('');
+            const [qualityFilter, setQualityFilter] = React.useState('all'); // all | incomplete | issues | draft
+            const [adminMode, setAdminMode] = React.useState('manage'); // manage | stock | batch
+            const [selectedIds, setSelectedIds] = React.useState([]);
+            const [batchTagCategory, setBatchTagCategory] = React.useState('purpose');
+            const [batchTagValue, setBatchTagValue] = React.useState(PRESET_PURPOSES[0]);
+            const [syncSeriesOnSave, setSyncSeriesOnSave] = React.useState(false);
+
+            React.useEffect(() => {
+                const presets = BATCH_TAG_PRESETS[batchTagCategory] || [];
+                if (!presets.includes(batchTagValue)) setBatchTagValue(presets[0] || '');
+            }, [batchTagCategory]);
 
             // 拖曳排序狀態
             const [draggedIndex, setDraggedIndex] = React.useState(null);
@@ -1714,18 +1955,20 @@
                 setEditingId(liquor.id);
                 const cloned = JSON.parse(JSON.stringify(liquor));
                 if (!cloned.tags) cloned.tags = {};
-                ["target", "purpose", "experience", "style", "flavor", "taste"].forEach(key => {
+                ["target", "purpose", "experience", "style", "flavor", "taste", "attributes"].forEach(key => {
                     if (!Array.isArray(cloned.tags[key])) cloned.tags[key] = [];
                 });
                 if (!cloned.text) cloned.text = {};
                 cloned.type = inferLiquorType(cloned);
                 cloned.stockStatus = getStockStatus(cloned);
+                cloned.publicationStatus = getPublicationStatus(cloned);
                 setEditForm(cloned);
+                setSyncSeriesOnSave(false);
                 setIsAdding(false);
             };
 
             const handleAdd = () => {
-                const newId = `L${String(liquors.length + 1).padStart(3, '0')}`;
+                const newId = generateNextLiquorId(liquors);
                 setEditingId(newId);
                 setEditForm({
                     id: newId,
@@ -1737,7 +1980,9 @@
                     image: `https://placehold.co/300x400/F9F6F0/1A2F4C?text=New\nItem`,
                     stock: true,
                     stockStatus: "現貨",
+                    publicationStatus: "草稿",
                     type: "一般高粱",
+                    series: "",
                     tags: { 
                         target: ["長輩", "家人", "自己"], 
                         purpose: ["送禮", "自飲"], 
@@ -1745,6 +1990,7 @@
                         style: ["經典"], 
                         flavor: ["穀糧"], 
                         taste: ["甘冽", "滑順"],
+                        attributes: [],
                         collectible: false, 
                         special: false, 
                         sizeCategory: "中瓶 (500~750ml)" 
@@ -1757,6 +2003,7 @@
                         reason: "" 
                     }
                 });
+                setSyncSeriesOnSave(false);
                 setIsAdding(true);
             };
 
@@ -1771,6 +2018,11 @@
                     setTimeout(() => setAlertMsg(""), 3000);
                     return;
                 }
+                if (isAdding && liquors.some(l => l.id === editForm.id)) {
+                    setAlertMsg(`ID ${editForm.id} 已存在，請取消後重新新增。`);
+                    setTimeout(() => setAlertMsg(""), 3500);
+                    return;
+                }
 
                 let finalSizeCat = "中瓶 (500~750ml)";
                 if (editForm.volume < 500) finalSizeCat = "小瓶 (<500ml)";
@@ -1779,6 +2031,7 @@
                 const finalForm = {
                     ...editForm,
                     type: editForm.type || inferLiquorType(editForm),
+                    publicationStatus: editForm.publicationStatus === "草稿" ? "草稿" : "已發布",
                     stockStatus: editForm.stockStatus || getStockStatus(editForm),
                     stock: (editForm.stockStatus || getStockStatus(editForm)) !== "暫無",
                     tags: {
@@ -1787,13 +2040,23 @@
                     }
                 };
 
-                const updatedList = isAdding 
+                let updatedList = isAdding 
                     ? [...liquors, finalForm] 
                     : liquors.map(l => l.id === finalForm.id ? finalForm : l);
 
+                const seriesName = String(finalForm.series || '').trim();
+                if (syncSeriesOnSave && seriesName) {
+                    updatedList = updatedList.map(item => {
+                        if (item.id === finalForm.id) return finalForm;
+                        if (String(item.series || '').trim() !== seriesName) return item;
+                        return copySeriesSharedFields(item, finalForm);
+                    });
+                }
+
                 setEditingId(null);
                 setEditForm(null);
-                saveAndSync(updatedList, "商品資料已成功儲存至雲端！");
+                setSyncSeriesOnSave(false);
+                saveAndSync(updatedList, syncSeriesOnSave && seriesName ? `商品已儲存，並同步「${seriesName}」系列共用資料！` : "商品資料已成功儲存至雲端！");
             };
 
             const handleChange = (field, value, isNested = false, nestedCategory = null) => {
@@ -1840,9 +2103,10 @@
                 let seq = liquors.length + 1;
                 let newId = `L${String(seq).padStart(3, '0')}`;
                 while (usedIds.has(newId)) { seq += 1; newId = `L${String(seq).padStart(3, '0')}`; }
-                const copy = { ...base, id: newId, name: `${base.name}（複製）` };
+                const copy = { ...base, id: newId, name: `${base.name}（複製）`, publicationStatus: "草稿" };
                 setEditingId(newId);
                 setEditForm(copy);
+                setSyncSeriesOnSave(false);
                 setIsAdding(true);
                 window.scrollTo({ top: 0, behavior: 'smooth' });
             };
@@ -1850,6 +2114,55 @@
             const handleQuickStock = (liquor, status) => {
                 const updated = liquors.map(item => item.id === liquor.id ? { ...item, stockStatus: status, stock: status !== '暫無' } : item);
                 saveAndSync(updated, `「${liquor.name}」庫存狀態已更新！`);
+            };
+
+            const handleQuickPublication = (liquor, status) => {
+                const updated = liquors.map(item => item.id === liquor.id ? { ...item, publicationStatus: status } : item);
+                saveAndSync(updated, `「${liquor.name}」已切換為${status}！`);
+            };
+
+            const handlePullSeriesShared = () => {
+                const seriesName = String(editForm?.series || '').trim();
+                if (!seriesName) {
+                    setAlertMsg('請先填寫「系列 / 產品家族」。');
+                    setTimeout(() => setAlertMsg(''), 3000);
+                    return;
+                }
+                const peer = liquors.find(item => item.id !== editForm.id && String(item.series || '').trim() === seriesName);
+                if (!peer) {
+                    setAlertMsg(`目前找不到其他「${seriesName}」系列酒款可帶入。`);
+                    setTimeout(() => setAlertMsg(''), 3200);
+                    return;
+                }
+                setEditForm(current => copySeriesSharedFields(current, normalizeLiquor(peer)));
+                setAlertMsg(`已從「${peer.name}」帶入系列共用介紹、故事、品飲筆記、風味與口感；尚未儲存。`);
+                setTimeout(() => setAlertMsg(''), 4200);
+            };
+
+            const toggleSelected = (id) => setSelectedIds(current => current.includes(id) ? current.filter(x => x !== id) : [...current, id]);
+
+            const handleBatchStock = (status) => {
+                if (!selectedIds.length) return;
+                const updated = liquors.map(item => selectedIds.includes(item.id) ? { ...item, stockStatus: status, stock: status !== '暫無' } : item);
+                saveAndSync(updated, `已批次更新 ${selectedIds.length} 款酒的庫存狀態。`);
+            };
+
+            const handleBatchPublication = (status) => {
+                if (!selectedIds.length) return;
+                const updated = liquors.map(item => selectedIds.includes(item.id) ? { ...item, publicationStatus: status } : item);
+                saveAndSync(updated, `已批次將 ${selectedIds.length} 款酒設為${status}。`);
+            };
+
+            const handleBatchTag = (action) => {
+                if (!selectedIds.length || !batchTagValue) return;
+                const updated = liquors.map(item => {
+                    if (!selectedIds.includes(item.id)) return item;
+                    const normalized = normalizeLiquor(item);
+                    const current = normalized.tags?.[batchTagCategory] || [];
+                    const next = action === 'add' ? Array.from(new Set([...current, batchTagValue])) : current.filter(tag => tag !== batchTagValue);
+                    return { ...normalized, tags: { ...normalized.tags, [batchTagCategory]: next } };
+                });
+                saveAndSync(updated, `已批次${action === 'add' ? '加入' : '移除'}「${batchTagValue}」標籤。`);
             };
 
             const handleExportJson = () => {
@@ -1870,10 +2183,25 @@
                         const parsed = JSON.parse(reader.result);
                         if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('格式不正確');
                         const normalized = parsed.map(normalizeLiquor);
+                        const duplicateIds = [...new Set(normalized.map(x => x.id).filter((id, idx, arr) => id && arr.indexOf(id) !== idx))];
+                        const invalidRows = normalized.filter(x => !x.id || !String(x.name || '').trim() || !(Number(x.abv) > 0) || !(Number(x.volume) > 0));
+                        if (duplicateIds.length) {
+                            setAlertMsg(`匯入已停止：發現重複 ID ${duplicateIds.slice(0, 5).join('、')}${duplicateIds.length > 5 ? '…' : ''}`);
+                            event.target.value = '';
+                            setTimeout(() => setAlertMsg(''), 6500);
+                            return;
+                        }
+                        if (invalidRows.length) {
+                            setAlertMsg(`匯入已停止：${invalidRows.length} 筆資料缺少 ID、酒名、酒精度或容量。`);
+                            event.target.value = '';
+                            setTimeout(() => setAlertMsg(''), 6500);
+                            return;
+                        }
                         const success = await onSaveToCloud(normalized);
                         if (success) {
                             setLiquors(normalized);
-                            setAlertMsg(`已匯入 ${normalized.length} 款酒並同步雲端！`);
+                            const needsTags = normalized.filter(x => getLiquorQuality(x, normalized).missingTags.length > 0).length;
+                            setAlertMsg(`已匯入 ${normalized.length} 款酒並同步雲端${needsTags ? `；其中 ${needsTags} 款仍有推薦標籤待補` : '！'}`);
                         } else setAlertMsg('匯入後雲端同步失敗，請確認登入狀態。');
                     } catch (e) {
                         setAlertMsg('JSON 匯入失敗，請確認檔案是由本後台匯出的酒款資料。');
@@ -1883,6 +2211,34 @@
                 };
                 reader.readAsText(file, 'utf-8');
             };
+
+            const adminAuditRows = React.useMemo(() => liquors.map((liquor, index) => ({
+                liquor,
+                index,
+                quality: getLiquorQuality(liquor, liquors)
+            })), [liquors]);
+
+            const auditSummary = React.useMemo(() => ({
+                total: adminAuditRows.length,
+                complete: adminAuditRows.filter(row => row.quality.errors.length === 0 && row.quality.missingTags.length === 0).length,
+                incomplete: adminAuditRows.filter(row => row.quality.missingTags.length > 0).length,
+                issues: adminAuditRows.filter(row => row.quality.errors.length > 0 || row.quality.warnings.length > 0).length,
+                published: adminAuditRows.filter(row => isLiquorPublished(row.liquor)).length,
+                drafts: adminAuditRows.filter(row => !isLiquorPublished(row.liquor)).length
+            }), [adminAuditRows]);
+
+            const visibleAdminRows = React.useMemo(() => {
+                const q = adminSearch.trim().toLowerCase();
+                return adminAuditRows.filter(row => {
+                    const { liquor, quality } = row;
+                    if (qualityFilter === 'incomplete' && quality.missingTags.length === 0) return false;
+                    if (qualityFilter === 'issues' && quality.errors.length === 0 && quality.warnings.length === 0) return false;
+                    if (qualityFilter === 'draft' && getPublicationStatus(liquor) !== '草稿') return false;
+                    if (!q) return true;
+                    const text = [liquor.id, liquor.name, liquor.series, liquor.type, liquor.volume, liquor.abv].filter(Boolean).join(' ').toLowerCase();
+                    return text.includes(q);
+                });
+            }, [adminAuditRows, adminSearch, qualityFilter]);
 
             const renderForm = () => (
                 <div className="bg-white p-6 md:p-8 rounded-xl shadow-lg mb-8 border-2 border-km-blue/20">
@@ -1961,6 +2317,33 @@
                                         {PRESET_STOCK_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
                                     </select>
                                 </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">前台發布狀態</label>
+                                    <select value={editForm.publicationStatus || getPublicationStatus(editForm)} onChange={e => handleChange('publicationStatus', e.target.value)} className="w-full border rounded-lg p-2.5 focus:border-km-blue outline-none bg-white">
+                                        {PRESET_PUBLICATION_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
+                                    </select>
+                                    <p className="text-[11px] text-gray-400 mt-1">草稿不會出現在前台搜尋、推薦與分享連結中。</p>
+                                </div>
+                                <div className="md:col-span-3">
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">系列 / 產品家族（選填）</label>
+                                    <input
+                                        type="text"
+                                        value={editForm.series || ''}
+                                        onChange={e => handleChange('series', e.target.value)}
+                                        placeholder="例如：白金龍、戰酒黑金龍、創世者、瓏時"
+                                        className="w-full border rounded-lg p-2.5 focus:border-km-blue outline-none"
+                                    />
+                                    <p className="text-[11px] text-gray-400 mt-1">同一支酒不同容量可共用系列名稱，但仍保留各自獨立 ID、價格與庫存。</p>
+                                    {String(editForm.series || '').trim() && (
+                                        <div className="mt-3 flex flex-col md:flex-row md:items-center gap-3 bg-white border rounded-lg p-3">
+                                            <button type="button" onClick={handlePullSeriesShared} className="px-3 py-2 rounded-lg border border-km-gold text-km-blue text-xs font-bold">從同系列帶入共用資料</button>
+                                            <label className="flex items-start gap-2 text-xs text-gray-600 cursor-pointer">
+                                                <input type="checkbox" checked={syncSeriesOnSave} onChange={e => setSyncSeriesOnSave(e.target.checked)} className="mt-0.5" />
+                                                <span>儲存時同步共用資料到同系列（類型、介紹、故事、品飲筆記、推薦理由、風味、口感）；容量、價格、庫存、圖片與情境標籤不會被覆蓋。</span>
+                                            </label>
+                                        </div>
+                                    )}
+                                </div>
                                 <div className="md:col-span-3">
                                     <label className="block text-sm font-medium text-gray-700 mb-1">商品圖片網址 (URL)</label>
                                     <input 
@@ -1973,9 +2356,25 @@
                             </div>
                         </div>
 
-                        {/* 2. 風味與口感標籤 */}
+                        {/* 2. 客觀產品屬性 */}
+                        <div className="bg-amber-50/60 p-4 rounded-xl border border-amber-200">
+                            <div className="mb-3">
+                                <h4 className="text-sm font-bold text-km-blue uppercase tracking-wider">2. 客觀產品屬性</h4>
+                                <p className="text-xs text-gray-500 mt-1">只有能從產品資料確認的事實才勾選；不要把「看起來特別」當成限量或限定。</p>
+                            </div>
+                            <TagEditor
+                                label="產品屬性"
+                                tags={editForm.tags.attributes || []}
+                                onAddTag={(tag) => handleAddTag('attributes', tag)}
+                                onRemoveTag={(tag) => handleRemoveTag('attributes', tag)}
+                                presets={PRESET_ATTRIBUTES}
+                                badgeColor="gold"
+                            />
+                        </div>
+
+                        {/* 3. 風味與口感標籤 */}
                         <div className="bg-[#FFFDF9] p-4 rounded-xl border border-km-gold/40">
-                            <h4 className="text-sm font-bold text-km-blue uppercase tracking-wider mb-3">2. 風味與口感設定</h4>
+                            <h4 className="text-sm font-bold text-km-blue uppercase tracking-wider mb-3">3. 風味與口感設定</h4>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <TagEditor 
                                     label="風味香氣標籤 (👃 風味)"
@@ -1996,10 +2395,10 @@
                             </div>
                         </div>
 
-                        {/* 3. 推薦條件標籤 */}
+                        {/* 4. 推薦條件標籤 */}
                         <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-200">
                             <div className="mb-4">
-                                <h4 className="text-sm font-bold text-km-blue uppercase tracking-wider">3. 推薦條件設定</h4>
+                                <h4 className="text-sm font-bold text-km-blue uppercase tracking-wider">4. 推薦條件設定</h4>
                                 <p className="text-xs text-gray-500 mt-1">這些標籤用來判斷「什麼需求下適合推薦這支酒」，不是替酒款打分。</p>
                             </div>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -2038,9 +2437,9 @@
                             </div>
                         </div>
 
-                        {/* 4. 介紹 */}
+                        {/* 5. 介紹 */}
                         <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
-                            <h4 className="text-sm font-bold text-km-blue uppercase tracking-wider mb-3">4. 商品介紹 (簡短與詳細)</h4>
+                            <h4 className="text-sm font-bold text-km-blue uppercase tracking-wider mb-3">5. 商品介紹 (簡短與詳細)</h4>
                             <div className="space-y-4">
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">列表簡短介紹 (顯示在商品卡片上)</label>
@@ -2064,9 +2463,9 @@
                             </div>
                         </div>
 
-                        {/* 5. 商品詳情 (品飲筆記、故事、推薦理由) */}
+                        {/* 6. 商品詳情 (品飲筆記、故事、推薦理由) */}
                         <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
-                            <h4 className="text-sm font-bold text-km-blue uppercase tracking-wider mb-3">5. 商品詳情 (品飲筆記與酒款故事)</h4>
+                            <h4 className="text-sm font-bold text-km-blue uppercase tracking-wider mb-3">6. 商品詳情 (品飲筆記與酒款故事)</h4>
                             <div className="space-y-4">
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">品飲筆記 (聞香、入口、尾韻詳情)</label>
@@ -2153,9 +2552,90 @@
                         </div>
                     </div>
 
+                    <div className="mb-6 grid grid-cols-2 md:grid-cols-6 gap-3">
+                        <div className="bg-white border rounded-xl p-3"><div className="text-xs text-gray-500">酒款總數</div><div className="text-2xl font-bold text-km-blue">{auditSummary.total}</div></div>
+                        <div className="bg-white border rounded-xl p-3"><div className="text-xs text-gray-500">核心標籤完整</div><div className="text-2xl font-bold text-emerald-600">{auditSummary.complete}</div></div>
+                        <div className="bg-white border rounded-xl p-3"><div className="text-xs text-gray-500">已發布</div><div className="text-2xl font-bold text-blue-600">{auditSummary.published}</div></div>
+                        <button type="button" onClick={() => setQualityFilter(qualityFilter === 'draft' ? 'all' : 'draft')} className={`text-left border rounded-xl p-3 transition-colors ${qualityFilter === 'draft' ? 'bg-violet-50 border-violet-300' : 'bg-white hover:border-violet-300'}`}><div className="text-xs text-gray-500">草稿</div><div className="text-2xl font-bold text-violet-600">{auditSummary.drafts}</div></button>
+                        <button type="button" onClick={() => setQualityFilter(qualityFilter === 'incomplete' ? 'all' : 'incomplete')} className={`text-left border rounded-xl p-3 transition-colors ${qualityFilter === 'incomplete' ? 'bg-amber-50 border-amber-400' : 'bg-white hover:border-amber-300'}`}><div className="text-xs text-gray-500">待補推薦標籤</div><div className="text-2xl font-bold text-amber-600">{auditSummary.incomplete}</div></button>
+                        <button type="button" onClick={() => setQualityFilter(qualityFilter === 'issues' ? 'all' : 'issues')} className={`text-left border rounded-xl p-3 transition-colors ${qualityFilter === 'issues' ? 'bg-red-50 border-red-300' : 'bg-white hover:border-red-300'}`}><div className="text-xs text-gray-500">需要檢查</div><div className="text-2xl font-bold text-km-red">{auditSummary.issues}</div></button>
+                    </div>
+
+                    <div className="mb-5 bg-white border rounded-xl p-4">
+                        <div className="flex flex-col md:flex-row md:items-center gap-3">
+                            <div className="flex-1 relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">⌕</span>
+                                <input type="search" value={adminSearch} onChange={e => setAdminSearch(e.target.value)} placeholder="後台搜尋酒名、ID、系列、類型……" className="w-full border rounded-lg pl-9 pr-3 py-2.5 text-sm outline-none focus:border-km-gold" />
+                            </div>
+                            <div className="flex gap-2 overflow-x-auto">
+                                {[['all','全部'],['draft','草稿'],['incomplete','待補標籤'],['issues','需要檢查']].map(([id,label]) => <button key={id} type="button" onClick={() => setQualityFilter(id)} className={`px-3 py-2 rounded-full text-xs whitespace-nowrap border ${qualityFilter === id ? 'bg-km-blue text-white border-km-blue' : 'bg-white text-gray-600 border-gray-300'}`}>{label}</button>)}
+                            </div>
+                        </div>
+                        <div className="mt-3 pt-3 border-t flex flex-wrap gap-2">
+                            {[['manage','完整管理'],['stock','快速庫存'],['batch','批次管理']].map(([id,label]) => (
+                                <button key={id} type="button" onClick={() => setAdminMode(id)} className={`px-4 py-2 rounded-lg text-xs font-bold border ${adminMode === id ? 'bg-km-gold text-white border-km-gold' : 'bg-white text-km-blue border-km-gold/50'}`}>{label}</button>
+                            ))}
+                        </div>
+                        {(adminSearch || qualityFilter !== 'all') && <div className="mt-2 text-xs text-gray-500">目前顯示 {visibleAdminRows.length} / {liquors.length} 款。篩選時為避免排序錯位，拖曳排序會暫停。</div>}
+                        <details className="mt-3 text-xs text-gray-600">
+                            <summary className="cursor-pointer font-bold text-km-blue">查看標籤規則提醒</summary>
+                            <div className="mt-2 leading-relaxed bg-gray-50 rounded-lg p-3">用途、對象、飲酒經驗是「店家在什麼情境推薦」；風味與口感只依品飲資料；限量、限定、紀念酒、聯名等請放在「產品屬性」，不要再塞進形象標籤。不同容量維持不同 ID，但可以共用「系列 / 產品家族」。</div>
+                        </details>
+                    </div>
+
                     {editingId && renderForm()}
 
-                    <div className="bg-white rounded-xl shadow-sm overflow-hidden border border-gray-200">
+                    {adminMode === 'stock' && (
+                        <div className="bg-white border rounded-xl shadow-sm mb-5 overflow-hidden">
+                            <div className="px-4 py-3 bg-gray-50 border-b"><h3 className="font-bold text-km-blue">快速庫存模式</h3><p className="text-xs text-gray-500 mt-1">只處理每天最常變動的庫存與發布狀態，修改後會立即同步雲端。</p></div>
+                            <div className="divide-y">
+                                {visibleAdminRows.map(({ liquor }) => (
+                                    <div key={`stock-${liquor.id}`} className="p-3 flex flex-col md:flex-row md:items-center gap-3">
+                                        <img src={liquor.image} alt={liquor.name} className="w-12 h-12 object-cover rounded-lg bg-gray-100" />
+                                        <div className="flex-1 min-w-0"><div className="font-bold text-km-blue text-sm truncate">{liquor.name}</div><div className="text-xs text-gray-400">{liquor.volume}ml · {liquor.abv}% Vol · {liquor.id}</div></div>
+                                        <select value={getStockStatus(liquor)} onChange={e => handleQuickStock(liquor, e.target.value)} className="border rounded-lg px-3 py-2 text-sm bg-white">{PRESET_STOCK_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}</select>
+                                        <select value={getPublicationStatus(liquor)} onChange={e => handleQuickPublication(liquor, e.target.value)} className="border rounded-lg px-3 py-2 text-sm bg-white">{PRESET_PUBLICATION_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}</select>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {adminMode === 'batch' && (
+                        <div className="bg-white border rounded-xl shadow-sm mb-5 overflow-hidden">
+                            <div className="p-4 bg-gray-50 border-b">
+                                <div className="flex flex-wrap items-center gap-2 mb-3">
+                                    <button type="button" onClick={() => {
+                                        const ids = visibleAdminRows.map(row => row.liquor.id);
+                                        setSelectedIds(current => ids.every(id => current.includes(id)) ? current.filter(id => !ids.includes(id)) : Array.from(new Set([...current, ...ids])));
+                                    }} className="px-3 py-2 rounded-lg border text-xs font-bold">{visibleAdminRows.length && visibleAdminRows.every(row => selectedIds.includes(row.liquor.id)) ? '取消選取目前結果' : '選取目前結果'}</button>
+                                    <button type="button" onClick={() => setSelectedIds([])} className="px-3 py-2 rounded-lg border text-xs">清除選取</button>
+                                    <span className="text-xs font-bold text-km-blue">已選 {selectedIds.length} 款</span>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                    <select defaultValue="" onChange={e => { if (e.target.value) handleBatchStock(e.target.value); e.target.value=''; }} className="border rounded-lg px-3 py-2 text-sm bg-white"><option value="">批次改庫存…</option>{PRESET_STOCK_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}</select>
+                                    <select defaultValue="" onChange={e => { if (e.target.value) handleBatchPublication(e.target.value); e.target.value=''; }} className="border rounded-lg px-3 py-2 text-sm bg-white"><option value="">批次改發布狀態…</option>{PRESET_PUBLICATION_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}</select>
+                                    <div className="flex flex-wrap md:flex-nowrap gap-2">
+                                        <select value={batchTagCategory} onChange={e => setBatchTagCategory(e.target.value)} className="border rounded-lg px-2 py-2 text-xs bg-white">{Object.keys(BATCH_TAG_PRESETS).map(key => <option key={key} value={key}>{TAG_LABELS[key]}</option>)}</select>
+                                        <select value={batchTagValue} onChange={e => setBatchTagValue(e.target.value)} className="border rounded-lg px-2 py-2 text-xs bg-white flex-1">{(BATCH_TAG_PRESETS[batchTagCategory] || []).map(tag => <option key={tag} value={tag}>{tag}</option>)}</select>
+                                        <button type="button" onClick={() => handleBatchTag('add')} className="px-3 py-2 rounded-lg bg-km-blue text-white text-xs font-bold">加入</button>
+                                        <button type="button" onClick={() => handleBatchTag('remove')} className="px-3 py-2 rounded-lg border border-km-red text-km-red text-xs font-bold">移除</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="divide-y max-h-[520px] overflow-y-auto">
+                                {visibleAdminRows.map(({ liquor }) => (
+                                    <label key={`batch-${liquor.id}`} className="p-3 flex items-center gap-3 cursor-pointer hover:bg-gray-50">
+                                        <input type="checkbox" checked={selectedIds.includes(liquor.id)} onChange={() => toggleSelected(liquor.id)} />
+                                        <img src={liquor.image} alt={liquor.name} className="w-10 h-10 object-cover rounded-lg bg-gray-100" />
+                                        <div className="flex-1"><div className="font-bold text-sm text-km-blue">{liquor.name}</div><div className="text-xs text-gray-400">{liquor.id} · {liquor.volume}ml · {getStockStatus(liquor)} · {getPublicationStatus(liquor)}</div></div>
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    <div className={`${adminMode !== 'manage' ? 'hidden' : ''} bg-white rounded-xl shadow-sm overflow-hidden border border-gray-200`}>
                         <div className="overflow-x-auto">
                             <table className="w-full text-left border-collapse">
                                 <thead>
@@ -2163,22 +2643,24 @@
                                         <th className="p-3.5 border-b text-center w-20">排序</th>
                                         <th className="p-3.5 border-b">圖片</th>
                                         <th className="p-3.5 border-b">名稱 / 容量</th>
+                                        <th className="p-3.5 border-b">資料狀態</th>
                                         <th className="p-3.5 border-b">類型</th>
                                         <th className="p-3.5 border-b">內部售價</th>
                                         <th className="p-3.5 border-b">風味標籤</th>
                                         <th className="p-3.5 border-b">口感標籤</th>
                                         <th className="p-3.5 border-b text-center">庫存</th>
+                                        <th className="p-3.5 border-b text-center">發布</th>
                                         <th className="p-3.5 border-b text-right">管理操作</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {liquors.map((liquor, index) => {
+                                    {visibleAdminRows.map(({ liquor, index, quality }) => {
                                         const isDragging = draggedIndex === index;
                                         const isOver = dragOverIndex === index;
                                         return (
                                             <tr 
-                                                key={liquor.id} 
-                                                draggable={!editingId}
+                                                key={`${liquor.id}-${index}`} 
+                                                draggable={!editingId && qualityFilter === 'all' && !adminSearch.trim()}
                                                 onDragStart={(e) => handleDragStart(e, index)}
                                                 onDragOver={(e) => handleDragOver(e, index)}
                                                 onDrop={(e) => handleDrop(e, index)}
@@ -2228,7 +2710,18 @@
                                                 </td>
                                                 <td className="p-3">
                                                     <div className="font-bold text-km-blue text-sm">{liquor.name}</div>
-                                                    <div className="text-xs text-gray-400">{liquor.volume}ml · {liquor.abv}% Vol</div>
+                                                    <div className="text-xs text-gray-400">{liquor.volume}ml · {liquor.abv}% Vol{liquor.series ? ` · ${liquor.series}` : ''}</div>
+                                                </td>
+                                                <td className="p-3 min-w-[120px]">
+                                                    {quality.errors.length > 0 ? (
+                                                        <span title={quality.errors.join('；')} className="text-[11px] bg-red-50 text-red-700 border border-red-200 px-2 py-1 rounded-full">⚠ 有錯誤</span>
+                                                    ) : quality.missingTags.length > 0 ? (
+                                                        <span title={`待補：${quality.missingTags.map(k => TAG_LABELS[k]).join('、')}`} className="text-[11px] bg-amber-50 text-amber-700 border border-amber-200 px-2 py-1 rounded-full">待補 {quality.missingTags.length} 類</span>
+                                                    ) : quality.warnings.length > 0 ? (
+                                                        <span title={quality.warnings.join('；')} className="text-[11px] bg-sky-50 text-sky-700 border border-sky-200 px-2 py-1 rounded-full">建議檢查</span>
+                                                    ) : (
+                                                        <span className="text-[11px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-1 rounded-full">✓ 完整</span>
+                                                    )}
                                                 </td>
                                                 <td className="p-3"><span className="text-[11px] bg-gray-100 text-gray-700 px-2 py-1 rounded-full">{inferLiquorType(liquor)}</span></td>
                                                 <td className="p-3 text-sm font-mono font-bold text-gray-800">NT$ {liquor.price}</td>
@@ -2251,9 +2744,15 @@
                                                         {PRESET_STOCK_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
                                                     </select>
                                                 </td>
+                                                <td className="p-3 text-center">
+                                                    <select value={getPublicationStatus(liquor)} onChange={(e) => handleQuickPublication(liquor, e.target.value)} className={`text-xs border rounded-lg px-2 py-1 bg-white ${getPublicationStatus(liquor) === '草稿' ? 'text-violet-700 border-violet-200' : 'text-emerald-700 border-emerald-200'}`}>
+                                                        {PRESET_PUBLICATION_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
+                                                    </select>
+                                                </td>
                                                 <td className="p-3 text-right whitespace-nowrap">
                                                     <button onClick={() => handleEdit(liquor)} className="text-blue-600 hover:text-blue-800 mr-3 text-sm font-bold">編輯</button>
                                                     <button onClick={() => handleDuplicate(liquor)} className="text-km-gold hover:text-km-blue mr-3 text-sm font-bold">複製</button>
+                                                    <button onClick={() => openPrintableQrCard(liquor)} className="text-emerald-700 hover:text-emerald-900 mr-3 text-sm font-bold">QR酒卡</button>
                                                     <button onClick={() => setConfirmDeleteId(liquor.id)} className="text-red-500 hover:text-red-700 text-sm font-medium">刪除</button>
                                                 </td>
                                             </tr>
@@ -2310,6 +2809,7 @@
                 } catch(e) {}
                 return initialLiquors.map(normalizeLiquor);
             });
+            const publicLiquors = React.useMemo(() => liquors.map(normalizeLiquor).filter(isLiquorPublished), [liquors]);
             const [quizResults, setQuizResults] = React.useState(null);
             const [selectedLiquor, setSelectedLiquor] = React.useState(null);
             const [activeFlavor, setActiveFlavor] = React.useState(null);
@@ -2452,13 +2952,13 @@
                 }
                 const wineId = params.get('wine');
                 if (wineId) {
-                    const found = liquors.find(item => item.id === wineId);
+                    const found = publicLiquors.find(item => item.id === wineId);
                     if (!found) return;
                     setSelectedLiquor(found);
                     setView('detail');
                 }
                 deepLinkHandled.current = true;
-            }, [isAgeVerified, liquors]);
+            }, [isAgeVerified, publicLiquors]);
 
             React.useEffect(() => {
                 if (!selectedLiquor?.id || view !== 'detail') return;
@@ -2489,11 +2989,11 @@
 
             const inquiryItems = React.useMemo(() => {
                 return inquiryIds
-                    .map(id => liquors.find(liquor => liquor.id === id))
+                    .map(id => publicLiquors.find(liquor => liquor.id === id))
                     .filter(Boolean);
-            }, [inquiryIds, liquors]);
+            }, [inquiryIds, publicLiquors]);
 
-            const compareItems = React.useMemo(() => compareIds.map(id => liquors.find(liquor => liquor.id === id)).filter(Boolean), [compareIds, liquors]);
+            const compareItems = React.useMemo(() => compareIds.map(id => publicLiquors.find(liquor => liquor.id === id)).filter(Boolean), [compareIds, publicLiquors]);
 
             const removeInquiry = (liquorId) => {
                 setInquiryIds(current => current.filter(id => id !== liquorId));
@@ -2531,9 +3031,9 @@
                     
                     <main className="flex-grow w-full relative">
                         {view === 'home' && <Home setView={setView} />}
-                        {view === 'quiz' && <Quiz setView={setView} setQuizResults={setQuizResults} liquors={liquors} />}
+                        {view === 'quiz' && <Quiz setView={setView} setQuizResults={setQuizResults} liquors={publicLiquors} />}
                         {view === 'results' && <Results setView={setView} results={quizResults} setSelectedLiquor={setSelectedLiquor} onFlavorClick={setActiveFlavor} inquiryIds={inquiryIds} onToggleInquiry={toggleInquiry} compareIds={compareIds} onToggleCompare={toggleCompare} favoriteIds={favoriteIds} onToggleFavorite={toggleFavorite} />}
-                        {view === 'catalog' && <Catalog setView={setView} liquors={liquors} setSelectedLiquor={setSelectedLiquor} onFlavorClick={setActiveFlavor} inquiryIds={inquiryIds} onToggleInquiry={toggleInquiry} compareIds={compareIds} onToggleCompare={toggleCompare} favoriteIds={favoriteIds} onToggleFavorite={toggleFavorite} recentIds={recentIds} />}
+                        {view === 'catalog' && <Catalog setView={setView} liquors={publicLiquors} setSelectedLiquor={setSelectedLiquor} onFlavorClick={setActiveFlavor} inquiryIds={inquiryIds} onToggleInquiry={toggleInquiry} compareIds={compareIds} onToggleCompare={toggleCompare} favoriteIds={favoriteIds} onToggleFavorite={toggleFavorite} recentIds={recentIds} />}
                         {view === 'detail' && <Detail setView={setView} liquor={selectedLiquor} onFlavorClick={setActiveFlavor} inquiryIds={inquiryIds} onToggleInquiry={toggleInquiry} compareIds={compareIds} onToggleCompare={toggleCompare} favoriteIds={favoriteIds} onToggleFavorite={toggleFavorite} />}
                         {view === 'admin' && (
                             <Admin 
