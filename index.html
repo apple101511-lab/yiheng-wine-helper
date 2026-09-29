@@ -255,6 +255,220 @@
         const PRESET_EXPERIENCES = ["第一次喝", "偶爾喝", "常喝", "老饕"];
         const PRESET_STYLES = ["經典", "體面", "穩重", "霸氣", "文雅", "特別", "喜氣", "有故事", "造型", "金門限定", "輕巧"];
 
+        const PRESET_TYPES = ["一般高粱", "陳年高粱", "桶陳", "紀念酒", "限量／特色", "禮盒", "罈裝"];
+        const PRESET_STOCK_STATUSES = ["現貨", "少量", "可詢問", "暫無"];
+
+        const inferLiquorType = (liquor = {}) => {
+            if (liquor.type) return liquor.type;
+            const tags = liquor.tags || {};
+            const text = liquor.text || {};
+            const haystack = [
+                liquor.name, liquor.age,
+                ...(Array.isArray(tags.style) ? tags.style : []),
+                ...(Array.isArray(tags.purpose) ? tags.purpose : []),
+                text.shortIntro, text.fullIntro, text.story
+            ].filter(Boolean).join(' ');
+            if (/(桶陳|雪莉桶|波本桶|橡木桶|威士忌桶|雙桶)/.test(haystack)) return "桶陳";
+            if (/(陳高|陳年|熟陳|老酒|特窖|窖藏)/.test(haystack)) return "陳年高粱";
+            if (/紀念/.test(haystack)) return "紀念酒";
+            if (/(罈|壇裝|甕裝)/.test(haystack)) return "罈裝";
+            if (/禮盒/.test(haystack)) return "禮盒";
+            if (tags.special) return "限量／特色";
+            return "一般高粱";
+        };
+
+        const getStockStatus = (liquor = {}) => {
+            if (PRESET_STOCK_STATUSES.includes(liquor.stockStatus)) return liquor.stockStatus;
+            return liquor.stock === false ? "暫無" : "現貨";
+        };
+
+        const normalizeLiquor = (liquor = {}) => ({
+            ...liquor,
+            type: inferLiquorType(liquor),
+            stockStatus: getStockStatus(liquor),
+            stock: getStockStatus(liquor) !== "暫無",
+            tags: {
+                ...(liquor.tags || {}),
+                target: Array.isArray(liquor.tags?.target) ? liquor.tags.target : [],
+                purpose: Array.isArray(liquor.tags?.purpose) ? liquor.tags.purpose : [],
+                experience: Array.isArray(liquor.tags?.experience) ? liquor.tags.experience : [],
+                style: Array.isArray(liquor.tags?.style) ? liquor.tags.style : [],
+                flavor: Array.isArray(liquor.tags?.flavor) ? liquor.tags.flavor : [],
+                taste: Array.isArray(liquor.tags?.taste) ? liquor.tags.taste : []
+            },
+            text: { ...(liquor.text || {}) }
+        });
+
+        const getBaseSiteUrl = () => `${window.location.origin}${window.location.pathname}`;
+        const getWineShareUrl = (id) => `${getBaseSiteUrl()}?wine=${encodeURIComponent(id)}`;
+        const getInquiryShareUrl = (ids) => `${getBaseSiteUrl()}?list=${ids.map(encodeURIComponent).join(',')}`;
+
+        const copyPlainText = async (text) => {
+            try {
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(text);
+                    return true;
+                }
+            } catch (e) {}
+            try {
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.focus();
+                textarea.select();
+                const ok = document.execCommand('copy');
+                document.body.removeChild(textarea);
+                return ok;
+            } catch (e) {
+                return false;
+            }
+        };
+
+        const canvasWrappedLines = (ctx, text, maxWidth) => {
+            const chars = String(text || '').split('');
+            const lines = [];
+            let line = '';
+            chars.forEach(char => {
+                const test = line + char;
+                if (ctx.measureText(test).width > maxWidth && line) {
+                    lines.push(line);
+                    line = char;
+                } else {
+                    line = test;
+                }
+            });
+            if (line) lines.push(line);
+            return lines;
+        };
+
+        const makeShareBlob = async ({ liquor = null, results = null }) => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 1080;
+            canvas.height = 1350;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#F9F6F0';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#1A2F4C';
+            ctx.fillRect(0, 0, canvas.width, 170);
+            ctx.fillStyle = '#E8D5A5';
+            ctx.font = 'bold 42px sans-serif';
+            ctx.fillText('怡亨選酒小幫手', 72, 92);
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = '24px sans-serif';
+            ctx.fillText(liquor ? '酒款分享卡' : '我的選酒結果', 72, 132);
+
+            if (liquor) {
+                ctx.fillStyle = '#1A2F4C';
+                ctx.font = 'bold 54px sans-serif';
+                const titleLines = canvasWrappedLines(ctx, liquor.name, 920).slice(0, 3);
+                titleLines.forEach((line, i) => ctx.fillText(line, 72, 260 + i * 70));
+                let y = 260 + titleLines.length * 70 + 26;
+                ctx.font = '30px sans-serif';
+                ctx.fillStyle = '#A63C30';
+                ctx.fillText(`${liquor.abv}% Vol  ·  ${liquor.volume}ml  ·  ${inferLiquorType(liquor)}`, 72, y);
+                y += 75;
+                ctx.fillStyle = '#1A2F4C';
+                ctx.font = 'bold 28px sans-serif';
+                ctx.fillText('風味', 72, y);
+                ctx.font = '28px sans-serif';
+                ctx.fillStyle = '#555';
+                ctx.fillText((liquor.tags?.flavor || []).join('・') || '依酒款資料為準', 180, y);
+                y += 55;
+                ctx.fillStyle = '#1A2F4C';
+                ctx.font = 'bold 28px sans-serif';
+                ctx.fillText('口感', 72, y);
+                ctx.font = '28px sans-serif';
+                ctx.fillStyle = '#555';
+                ctx.fillText((liquor.tags?.taste || []).join('・') || '依酒款資料為準', 180, y);
+                y += 80;
+                ctx.fillStyle = '#FFFFFF';
+                ctx.strokeStyle = '#E2DFD8';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.roundRect(60, y, 960, 360, 24);
+                ctx.fill();
+                ctx.stroke();
+                ctx.fillStyle = '#1A2F4C';
+                ctx.font = 'bold 28px sans-serif';
+                ctx.fillText('酒款介紹', 92, y + 58);
+                ctx.font = '27px sans-serif';
+                ctx.fillStyle = '#555';
+                const introLines = canvasWrappedLines(ctx, liquor.text?.shortIntro || liquor.text?.reason || '', 850).slice(0, 6);
+                introLines.forEach((line, i) => ctx.fillText(line, 92, y + 112 + i * 43));
+                const url = getWineShareUrl(liquor.id);
+                ctx.fillStyle = '#1A2F4C';
+                ctx.font = '22px sans-serif';
+                ctx.fillText('掃描／點擊分享連結查看完整酒款資訊', 72, 1220);
+                ctx.fillStyle = '#777';
+                ctx.font = '18px sans-serif';
+                const shortUrl = url.length > 80 ? url.slice(0, 77) + '…' : url;
+                ctx.fillText(shortUrl, 72, 1260);
+            } else if (results) {
+                ctx.fillStyle = '#1A2F4C';
+                ctx.font = 'bold 42px sans-serif';
+                ctx.fillText('為你挑出的酒款', 72, 250);
+                const items = (results.top3 || []).slice(0, 3);
+                items.forEach((item, idx) => {
+                    const top = 320 + idx * 270;
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.strokeStyle = '#E2DFD8';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.roundRect(60, top, 960, 220, 22);
+                    ctx.fill();
+                    ctx.stroke();
+                    ctx.fillStyle = '#C5A059';
+                    ctx.font = 'bold 38px sans-serif';
+                    ctx.fillText(String(idx + 1).padStart(2, '0'), 92, top + 62);
+                    ctx.fillStyle = '#1A2F4C';
+                    ctx.font = 'bold 32px sans-serif';
+                    const nameLines = canvasWrappedLines(ctx, item.name, 760).slice(0, 2);
+                    nameLines.forEach((line, i) => ctx.fillText(line, 170, top + 58 + i * 42));
+                    ctx.font = '23px sans-serif';
+                    ctx.fillStyle = '#666';
+                    ctx.fillText(`${item.abv}% Vol · ${item.volume}ml · ${inferLiquorType(item)}`, 170, top + 150);
+                    const reason = (item.matchReasons || []).slice(0, 3).join('、');
+                    ctx.fillText(reason ? `符合：${reason}` : '依你的需求綜合推薦', 170, top + 188);
+                });
+                ctx.fillStyle = '#1A2F4C';
+                ctx.font = '22px sans-serif';
+                ctx.fillText('完整資訊請至怡亨選酒小幫手查看', 72, 1200);
+                ctx.fillStyle = '#777';
+                ctx.font = '18px sans-serif';
+                ctx.fillText(getBaseSiteUrl(), 72, 1240);
+            }
+
+            ctx.fillStyle = '#A63C30';
+            ctx.font = 'bold 20px sans-serif';
+            ctx.fillText('禁止酒駕｜未滿十八歲禁止飲酒', 72, 1310);
+
+            return await new Promise(resolve => canvas.toBlob(resolve, 'image/png', 0.95));
+        };
+
+        const shareOrDownloadBlob = async (blob, filename, shareData = {}) => {
+            if (!blob) return false;
+            const file = new File([blob], filename, { type: 'image/png' });
+            try {
+                if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+                    await navigator.share({ ...shareData, files: [file] });
+                    return true;
+                }
+            } catch (e) {
+                if (e?.name === 'AbortError') return false;
+            }
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            return true;
+        };
+
         // 推薦分數只代表「符合這次需求的程度」，不是替酒本身評分。
         const MATCH_WEIGHTS = {
             target: 5,
@@ -482,6 +696,186 @@
             );
         };
 
+        const InquiryButton = ({ liquor, isInList, onToggle, size = 'small', className = '' }) => {
+            const isSmall = size === 'small';
+            return (
+                <button
+                    type="button"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onToggle(liquor.id);
+                    }}
+                    className={`inline-flex items-center justify-center rounded-full border font-bold transition-all duration-200 active:scale-95 ${
+                        isInList
+                            ? 'bg-km-gold text-white border-km-gold hover:bg-opacity-90'
+                            : 'bg-white text-km-blue border-km-gold hover:bg-km-gold-light/30'
+                    } ${isSmall ? 'px-3 py-1.5 text-xs' : 'px-5 py-2.5 text-sm'} ${className}`}
+                    title={isInList ? '從詢問清單移除' : '加入詢問清單'}
+                >
+                    <span className="mr-1.5">{isInList ? '✓' : '+'}</span>
+                    {isInList ? '已加入清單' : '加入詢問清單'}
+                </button>
+            );
+        };
+
+        const InquiryListModal = ({ items, onRemove, onClear, onClose, prefs, onPrefsChange }) => {
+            const [copyStatus, setCopyStatus] = React.useState('');
+
+            const buildMessage = () => {
+                const lines = items.map((item, index) => `${index + 1}. ${item.name}（${item.abv}% / ${item.volume}ml）`);
+                const context = [
+                    prefs?.recipient ? `對象：${prefs.recipient}` : '',
+                    prefs?.budget ? `預算：${prefs.budget}` : '',
+                    prefs?.note ? `其他需求：${prefs.note}` : ''
+                ].filter(Boolean);
+                return `您好，我在「怡亨選酒小幫手」看到以下酒款，想詢問目前價格與庫存：\n\n${lines.join('\n')}${context.length ? `\n\n我的需求：\n${context.join('\n')}` : ''}\n\n謝謝！`;
+            };
+
+            const handleCopyOnly = async () => {
+                if (items.length === 0) return;
+                const ok = await copyPlainText(buildMessage());
+                setCopyStatus(ok ? '已複製詢問內容' : '無法自動複製，請手動複製酒款名稱');
+                window.setTimeout(() => setCopyStatus(''), 2500);
+            };
+
+            const handleLineInquiry = async () => {
+                if (items.length === 0) return;
+                const message = buildMessage();
+                const lineWindow = window.open('about:blank', '_blank');
+                const ok = await copyPlainText(message);
+                setCopyStatus(ok ? '已複製詢問內容，正在前往 LINE' : '正在前往 LINE，請手動輸入酒款名稱');
+                if (lineWindow) lineWindow.location.href = 'https://lin.ee/9O8E0wy';
+                else window.location.href = 'https://lin.ee/9O8E0wy';
+            };
+
+            const handleShareList = async () => {
+                if (items.length === 0) return;
+                const url = getInquiryShareUrl(items.map(item => item.id));
+                try {
+                    if (navigator.share) {
+                        await navigator.share({ title: '怡亨選酒詢問清單', text: '我整理了幾支想詢問的酒款', url });
+                        return;
+                    }
+                } catch (e) {
+                    if (e?.name === 'AbortError') return;
+                }
+                const ok = await copyPlainText(url);
+                setCopyStatus(ok ? '已複製詢問清單連結' : '無法自動複製連結');
+                window.setTimeout(() => setCopyStatus(''), 2500);
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black/50 z-[180] flex items-end sm:items-center justify-center sm:px-4" onClick={onClose}>
+                    <div className="bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl shadow-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+                        <div className="px-5 py-4 border-b border-km-gray flex items-center justify-between">
+                            <div>
+                                <h3 className="text-xl font-serif font-bold text-km-blue">我的詢問清單</h3>
+                                <p className="text-xs text-gray-500 mt-1">共 {items.length} 款，可一起帶著需求詢問店家</p>
+                            </div>
+                            <button type="button" onClick={onClose} className="text-3xl leading-none text-gray-400 hover:text-km-blue">&times;</button>
+                        </div>
+
+                        <div className="p-5 overflow-y-auto flex-1">
+                            {items.length === 0 ? (
+                                <div className="text-center py-10 text-gray-500">
+                                    <div className="text-4xl mb-3">📝</div>
+                                    <p className="font-bold text-km-blue mb-1">詢問清單目前是空的</p>
+                                    <p className="text-sm">看到有興趣的酒款時，按「加入詢問清單」即可。</p>
+                                </div>
+                            ) : (
+                                <>
+                                    <div className="space-y-3">
+                                        {items.map((item) => (
+                                            <div key={item.id} className="flex items-center gap-3 border border-km-gray rounded-xl p-3 bg-km-white">
+                                                <img src={item.image} alt={item.name} className="w-14 h-14 object-cover rounded-lg bg-gray-100 flex-shrink-0" />
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="font-bold text-km-blue text-sm line-clamp-2">{item.name}</div>
+                                                    <div className="text-xs text-gray-500 mt-1">{item.abv}% Vol · {item.volume}ml · {getStockStatus(item)}</div>
+                                                </div>
+                                                <button type="button" onClick={() => onRemove(item.id)} className="text-xs text-km-red border border-km-red/30 rounded-full px-2.5 py-1 hover:bg-red-50 flex-shrink-0">移除</button>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    <div className="mt-5 p-4 bg-blue-50/50 border border-blue-100 rounded-xl">
+                                        <div className="font-bold text-km-blue text-sm mb-3">一起告訴店家你的需求（選填）</div>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                                            <input type="text" value={prefs?.recipient || ''} onChange={e => onPrefsChange({ ...prefs, recipient: e.target.value })} placeholder="例如：送長輩／自己喝" className="border rounded-lg p-2.5 text-sm outline-none focus:border-km-gold" />
+                                            <input type="text" value={prefs?.budget || ''} onChange={e => onPrefsChange({ ...prefs, budget: e.target.value })} placeholder="例如：預算約 2000" className="border rounded-lg p-2.5 text-sm outline-none focus:border-km-gold" />
+                                        </div>
+                                        <textarea value={prefs?.note || ''} onChange={e => onPrefsChange({ ...prefs, note: e.target.value })} placeholder="例如：希望不要太烈、想找有陳年感的" className="w-full border rounded-lg p-2.5 text-sm outline-none focus:border-km-gold h-20"></textarea>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+
+                        <div className="p-5 border-t border-km-gray bg-gray-50 rounded-b-2xl">
+                            {copyStatus && <div className="text-center text-xs font-bold text-km-blue mb-3">{copyStatus}</div>}
+                            <div className="grid grid-cols-3 gap-2 mb-3">
+                                <button type="button" onClick={handleCopyOnly} disabled={items.length === 0} className="py-2.5 rounded-lg border border-km-blue text-km-blue font-bold text-xs disabled:opacity-40">複製內容</button>
+                                <button type="button" onClick={handleShareList} disabled={items.length === 0} className="py-2.5 rounded-lg border border-km-gold text-km-blue font-bold text-xs disabled:opacity-40">分享清單</button>
+                                <button type="button" onClick={onClear} disabled={items.length === 0} className="py-2.5 rounded-lg border border-gray-300 text-gray-600 font-bold text-xs disabled:opacity-40">清空</button>
+                            </div>
+                            <button type="button" onClick={handleLineInquiry} disabled={items.length === 0} className="w-full py-3 rounded-lg bg-[#06C755] text-white font-bold shadow-sm hover:bg-[#05b04c] disabled:opacity-40">複製內容並前往 LINE</button>
+                            <p className="text-[11px] text-gray-400 text-center mt-2">LINE 開啟後，直接貼上剛剛複製的內容即可。</p>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const FavoriteButton = ({ liquorId, isFavorite, onToggle, size = 'small' }) => (
+            <button type="button" onClick={(e) => { e.stopPropagation(); onToggle(liquorId); }} className={`${size === 'small' ? 'w-9 h-9 text-lg' : 'px-4 py-2.5 text-sm'} inline-flex items-center justify-center rounded-full border transition-colors ${isFavorite ? 'bg-red-50 text-km-red border-km-red/30' : 'bg-white text-gray-500 border-gray-300 hover:border-km-red'}`} title={isFavorite ? '取消收藏' : '收藏酒款'}>
+                {isFavorite ? '♥' : '♡'}{size !== 'small' && <span className="ml-1.5 font-bold">{isFavorite ? '已收藏' : '收藏'}</span>}
+            </button>
+        );
+
+        const CompareButton = ({ liquor, isCompared, onToggle, size = 'small' }) => (
+            <button type="button" onClick={(e) => { e.stopPropagation(); onToggle(liquor.id); }} className={`inline-flex items-center justify-center rounded-full border font-bold transition-colors ${isCompared ? 'bg-km-blue text-white border-km-blue' : 'bg-white text-km-blue border-km-blue/40 hover:border-km-blue'} ${size === 'small' ? 'px-3 py-1.5 text-xs' : 'px-4 py-2.5 text-sm'}`}>
+                {isCompared ? '✓ 已加入比較' : '⇄ 加入比較'}
+            </button>
+        );
+
+        const CompareModal = ({ items, onRemove, onClear, onClose, inquiryIds, onToggleInquiry }) => (
+            <div className="fixed inset-0 bg-black/50 z-[190] flex items-end sm:items-center justify-center sm:px-4" onClick={onClose}>
+                <div className="bg-white w-full sm:max-w-4xl rounded-t-2xl sm:rounded-2xl shadow-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+                    <div className="px-5 py-4 border-b flex justify-between items-center">
+                        <div><h3 className="text-xl font-serif font-bold text-km-blue">酒款比較</h3><p className="text-xs text-gray-500 mt-1">最多比較 3 款，快速看出差異</p></div>
+                        <button type="button" onClick={onClose} className="text-3xl text-gray-400 hover:text-km-blue">&times;</button>
+                    </div>
+                    <div className="p-5 overflow-auto">
+                        {items.length < 2 ? (
+                            <div className="text-center py-12 text-gray-500"><div className="text-4xl mb-3">⇄</div><p className="font-bold text-km-blue">再加入 {2 - items.length} 款就能開始比較</p></div>
+                        ) : (
+                            <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${items.length}, minmax(210px, 1fr))`, minWidth: `${items.length * 220}px` }}>
+                                {items.map(item => (
+                                    <div key={item.id} className="border border-km-gray rounded-xl overflow-hidden bg-km-white">
+                                        <img src={item.image} alt={item.name} className="w-full h-36 object-cover bg-gray-100" />
+                                        <div className="p-4">
+                                            <h4 className="font-bold text-km-blue min-h-[3rem]">{item.name}</h4>
+                                            <div className="text-xs text-gray-500 mt-2">{item.abv}% Vol · {item.volume}ml</div>
+                                            <div className="mt-3 text-xs space-y-2">
+                                                <div><span className="font-bold text-km-blue">類型：</span>{inferLiquorType(item)}</div>
+                                                <div><span className="font-bold text-km-blue">庫存：</span>{getStockStatus(item)}</div>
+                                                <div><span className="font-bold text-km-blue">風味：</span>{(item.tags?.flavor || []).join('、') || '—'}</div>
+                                                <div><span className="font-bold text-km-blue">口感：</span>{(item.tags?.taste || []).join('、') || '—'}</div>
+                                                <div><span className="font-bold text-km-blue">用途：</span>{(item.tags?.purpose || []).join('、') || '—'}</div>
+                                            </div>
+                                            <div className="mt-4 flex flex-col gap-2">
+                                                <InquiryButton liquor={item} isInList={inquiryIds.includes(item.id)} onToggle={onToggleInquiry} size="small" />
+                                                <button type="button" onClick={() => onRemove(item.id)} className="text-xs text-km-red underline underline-offset-2">從比較移除</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                    <div className="p-4 border-t bg-gray-50 flex justify-end"><button type="button" onClick={onClear} disabled={items.length === 0} className="text-sm text-gray-600 border rounded-lg px-4 py-2 disabled:opacity-40">清空比較</button></div>
+                </div>
+            </div>
+        );
+
         const Tag = ({ text, type = 'default', onClick }) => {
             const styles = {
                 default: "bg-gray-100 text-gray-600 border border-gray-200",
@@ -705,7 +1099,7 @@
 
             const calculateResults = () => {
                 // 1. 只推薦目前標示為有庫存/可推薦的酒款。
-                const availableLiquors = liquors.filter(l => l.stock !== false);
+                const availableLiquors = liquors.map(normalizeLiquor).filter(l => getStockStatus(l) !== '暫無');
 
                 // 2. 預算優先作為硬篩選；若完全沒有符合，就只取價格最接近的候選酒款。
                 let matchedLiquors = availableLiquors.filter(l => checkBudgetMatch(Number(l.price) || 0, answers.budget));
@@ -779,6 +1173,7 @@
                         ...liquor,
                         score,
                         matchCount: matchReasons.length,
+                        matchReasons,
                         personalizedReason
                     };
                 });
@@ -790,7 +1185,7 @@
                 });
 
                 const top3 = scoredLiquors.slice(0, 3);
-                setQuizResults({ top3, budgetFallback, answers });
+                setQuizResults({ top3, ranked: scoredLiquors, budgetFallback, answers });
                 setView('results');
             };
 
@@ -868,16 +1263,22 @@
             );
         };
 
-        const Results = ({ setView, results, setSelectedLiquor, onFlavorClick }) => {
+        const Results = ({ setView, results, setSelectedLiquor, onFlavorClick, inquiryIds, onToggleInquiry, compareIds, onToggleCompare, favoriteIds, onToggleFavorite }) => {
             if (!results || !results.top3 || results.top3.length === 0) {
-                return <div className="text-center py-20">發生錯誤，請重新測驗。</div>;
+                return <div className="text-center py-20">目前沒有符合條件的可推薦酒款，請重新測驗。</div>;
             }
+
+            const ranked = results.ranked?.length ? results.ranked : results.top3;
+            const [offset, setOffset] = React.useState(0);
+            const [shareStatus, setShareStatus] = React.useState('');
+            const displayed = ranked.slice(offset, offset + 3);
+            const visibleItems = displayed.length ? displayed : ranked.slice(0, 3);
 
             const getRankBadge = (index) => {
                 switch(index) {
-                    case 0: return { label: "🥇 最推薦", color: "bg-km-red text-white" };
-                    case 1: return { label: "🥈 第二推薦", color: "bg-km-gold text-white" };
-                    case 2: return { label: "✨ 特色推薦", color: "bg-km-blue text-white" };
+                    case 0: return { label: offset === 0 ? "🥇 最推薦" : "另一個選擇", color: "bg-km-red text-white" };
+                    case 1: return { label: offset === 0 ? "🥈 第二推薦" : "風格替代", color: "bg-km-gold text-white" };
+                    case 2: return { label: offset === 0 ? "✨ 特色推薦" : "也可以看看", color: "bg-km-blue text-white" };
                     default: return { label: "推薦", color: "bg-gray-500 text-white" };
                 }
             };
@@ -887,65 +1288,59 @@
                 setView('detail');
             };
 
+            const handleNextGroup = () => {
+                if (ranked.length <= 3) return;
+                const next = offset + 3;
+                setOffset(next >= ranked.length ? 0 : next);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            };
+
+            const handleShareResults = async () => {
+                setShareStatus('產生分享圖片中…');
+                const blob = await makeShareBlob({ results: { ...results, top3: visibleItems } });
+                await shareOrDownloadBlob(blob, '怡亨選酒推薦.png', { title: '我的怡亨選酒結果', text: '這是我用怡亨選酒小幫手找到的酒款' });
+                setShareStatus('分享圖片已準備完成');
+                setTimeout(() => setShareStatus(''), 2200);
+            };
+
             return (
-                <div className="max-w-2xl mx-auto px-4 py-8 pb-20">
+                <div className="max-w-2xl mx-auto px-4 py-8 pb-24">
                     <div className="text-center mb-8">
-                        <h2 className="text-2xl font-serif font-bold text-km-blue mb-3">為您找到最適合的酒款</h2>
-                        {results.budgetFallback && (
-                            <div className="bg-orange-50 border border-orange-200 text-orange-700 px-4 py-3 rounded-lg text-sm mb-4">
-                                💡 提示：您選擇的預算區間目前沒有可推薦酒款，因此以下改以價格最接近的酒款作為參考，並再依其他需求排序。
-                            </div>
-                        )}
-                        <p className="text-gray-600">
-                            根據您選擇的「<span className="font-bold text-km-blue">{results.answers.target}</span>」、「<span className="font-bold text-km-blue">{results.answers.purpose}</span>」與其他偏好，推薦如下：
-                        </p>
+                        <h2 className="text-2xl font-serif font-bold text-km-blue mb-3">為您找到最符合需求的酒款</h2>
+                        {results.budgetFallback && <div className="bg-orange-50 border border-orange-200 text-orange-700 px-4 py-3 rounded-lg text-sm mb-4">💡 你的預算區間目前沒有可推薦酒款，因此以下改以價格最接近的酒款作為參考，再依其他需求排序。</div>}
+                        <p className="text-gray-600">根據「<span className="font-bold text-km-blue">{results.answers.target}</span>」、「<span className="font-bold text-km-blue">{results.answers.purpose}</span>」與其他偏好，系統依符合條件的程度排序。</p>
+                        <p className="text-xs text-gray-400 mt-2">這裡的排序代表符合本次需求的程度，不是替酒款本身評分。</p>
                     </div>
 
                     <div className="space-y-6">
-                        {results.top3.map((liquor, index) => {
+                        {visibleItems.map((liquor, index) => {
                             const badge = getRankBadge(index);
                             return (
                                 <div key={liquor.id} className="km-card overflow-hidden relative cursor-pointer group hover:border-km-gold transition-colors" onClick={() => viewDetail(liquor)}>
-                                    <div className={`absolute top-0 left-0 px-4 py-1.5 rounded-br-xl font-bold text-sm shadow-sm z-10 ${badge.color}`}>
-                                        {badge.label}
-                                    </div>
-                                    
+                                    <div className={`absolute top-0 left-0 px-4 py-1.5 rounded-br-xl font-bold text-sm shadow-sm z-10 ${badge.color}`}>{badge.label}</div>
                                     <div className="flex flex-col sm:flex-row">
-                                        <div className="w-full sm:w-2/5 bg-gray-100 flex justify-center items-center overflow-hidden">
+                                        <div className="w-full sm:w-2/5 bg-gray-100 flex justify-center items-center overflow-hidden relative">
                                             <img src={liquor.image} alt={liquor.name} className="w-full h-48 sm:h-full object-cover object-center group-hover:scale-105 transition-transform duration-500"/>
+                                            <button type="button" onClick={(e) => { e.stopPropagation(); onToggleFavorite(liquor.id); }} className="absolute top-3 right-3 w-9 h-9 rounded-full bg-white/90 shadow flex items-center justify-center text-xl text-km-red">{favoriteIds.includes(liquor.id) ? '♥' : '♡'}</button>
                                         </div>
                                         <div className="w-full sm:w-3/5 p-5 flex flex-col justify-between">
                                             <div>
-                                                <div className="flex justify-between items-start mb-2 mt-4 sm:mt-0">
-                                                    <h3 className="text-xl font-serif font-bold text-km-blue">{liquor.name}</h3>
+                                                <div className="flex justify-between items-start mb-2 mt-4 sm:mt-0"><h3 className="text-xl font-serif font-bold text-km-blue">{liquor.name}</h3></div>
+                                                <div className="flex items-center justify-between mb-2"><span className="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-600">{inferLiquorType(liquor)} · {getStockStatus(liquor)}</span><span className="text-xs text-gray-500 font-medium">{liquor.volume}ml / {liquor.abv}%</span></div>
+                                                <div className="mb-3 flex flex-wrap gap-2">
+                                                    <InquiryButton liquor={liquor} isInList={inquiryIds.includes(liquor.id)} onToggle={onToggleInquiry} size="small" />
+                                                    <CompareButton liquor={liquor} isCompared={compareIds.includes(liquor.id)} onToggle={onToggleCompare} size="small" />
                                                 </div>
-                                                
-                                                {/* 價格替換為詢問專人 */}
-                                                <div className="flex items-center justify-between mb-3">
-                                                    <LineConsultButton size="small" />
-                                                    <span className="text-xs text-gray-500 font-medium">({liquor.volume}ml / {liquor.abv}%)</span>
-                                                </div>
-                                                
-                                                {/* 風味與口感雙重標籤 */}
                                                 <div className="flex flex-wrap mb-3">
-                                                    {liquor.tags.flavor && liquor.tags.flavor.map(t => (
-                                                        <Tag key={`flv-${t}`} text={t} type="flavor" onClick={(e) => { e.stopPropagation(); onFlavorClick(t); }} />
-                                                    ))}
-                                                    {liquor.tags.taste && liquor.tags.taste.map(t => (
-                                                        <Tag key={`tst-${t}`} text={t} type="taste" />
-                                                    ))}
+                                                    {liquor.tags?.flavor?.map(t => <Tag key={`flv-${t}`} text={t} type="flavor" onClick={(e) => { e.stopPropagation(); onFlavorClick(t); }} />)}
+                                                    {liquor.tags?.taste?.map(t => <Tag key={`tst-${t}`} text={t} type="taste" />)}
                                                 </div>
-                                                
-                                                <p className="text-sm text-gray-600 mb-4 line-clamp-2">
-                                                    {liquor.text.shortIntro}
-                                                </p>
+                                                <p className="text-sm text-gray-600 mb-4 line-clamp-2">{liquor.text?.shortIntro}</p>
                                             </div>
-                                            
                                             <div className="bg-km-white p-3 rounded-lg border border-km-gold-light border-opacity-50">
-                                                <p className="text-xs text-km-blue font-bold mb-1">推薦理由：</p>
-                                                <p className="text-xs text-gray-700 leading-relaxed">
-                                                    {liquor.personalizedReason}
-                                                </p>
+                                                <p className="text-xs text-km-blue font-bold mb-2">為什麼會出現在這裡？</p>
+                                                <div className="flex flex-wrap gap-1.5 mb-2">{(liquor.matchReasons || []).map(reason => <span key={reason} className="text-[11px] px-2 py-1 bg-blue-50 text-km-blue rounded-full border border-blue-100">{reason}</span>)}</div>
+                                                <p className="text-xs text-gray-700 leading-relaxed">{liquor.personalizedReason}</p>
                                             </div>
                                         </div>
                                     </div>
@@ -954,7 +1349,13 @@
                         })}
                     </div>
 
-                    <div className="mt-10 flex flex-col space-y-4 max-w-sm mx-auto">
+                    <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {ranked.length > 3 && <Button variant="secondary" onClick={handleNextGroup}>換一組推薦</Button>}
+                        <Button variant="gold" onClick={handleShareResults}>分享推薦結果圖片</Button>
+                    </div>
+                    {shareStatus && <p className="text-center text-xs text-km-blue mt-3 font-bold">{shareStatus}</p>}
+
+                    <div className="mt-8 flex flex-col space-y-3 max-w-sm mx-auto">
                         <Button variant="primary" onClick={() => setView('catalog')}>瀏覽所有酒款</Button>
                         <Button variant="outline" onClick={() => setView('quiz')}>重新測驗</Button>
                     </div>
@@ -962,170 +1363,174 @@
             );
         };
 
-        const Catalog = ({ setView, liquors, setSelectedLiquor, onFlavorClick }) => {
+        const Catalog = ({ setView, liquors, setSelectedLiquor, onFlavorClick, inquiryIds, onToggleInquiry, compareIds, onToggleCompare, favoriteIds, onToggleFavorite, recentIds }) => {
             const [filter, setFilter] = React.useState('all');
+            const [searchQuery, setSearchQuery] = React.useState('');
 
-            const filteredLiquors = React.useMemo(() => {
-                if (filter === 'all') return liquors;
-                if (filter === '<1000') return liquors.filter(l => l.price < 1000);
-                if (filter === '1000+') return liquors.filter(l => l.price >= 1000);
-                if (filter === 'gift') return liquors.filter(l => l.tags.purpose.includes('送禮'));
-                return liquors;
-            }, [liquors, filter]);
+            const categoryOptions = [
+                { id: 'all', label: '全部' },
+                { id: 'favorites', label: '♡ 我的收藏' },
+                { id: 'gift', label: '送禮推薦' },
+                { id: 'self', label: '自飲推薦' },
+                { id: 'beginner', label: '新手友善' },
+                { id: 'classic', label: '經典酒款' },
+                { id: 'aged', label: '陳高／熟陳' },
+                { id: 'barrel', label: '桶陳酒款' },
+                { id: 'collectible', label: '收藏／紀念' },
+                { id: 'special', label: '特色酒款' }
+            ];
 
-            const viewDetail = (liquor) => {
-                setSelectedLiquor(liquor);
-                setView('detail');
+            const getArray = (value) => Array.isArray(value) ? value : [];
+            const getSearchText = (rawLiquor) => {
+                const liquor = normalizeLiquor(rawLiquor);
+                const tags = liquor.tags || {};
+                const text = liquor.text || {};
+                return [liquor.name, liquor.age, liquor.type, getStockStatus(liquor), liquor.abv, `${liquor.abv}%`, liquor.volume, `${liquor.volume}ml`, ...getArray(tags.target), ...getArray(tags.purpose), ...getArray(tags.experience), ...getArray(tags.style), ...getArray(tags.flavor), ...getArray(tags.taste), tags.sizeCategory, text.shortIntro, text.fullIntro, text.tastingNotes, text.story, text.reason].filter(Boolean).join(' ').toLowerCase();
             };
 
+            const matchesCategory = (rawLiquor) => {
+                const liquor = normalizeLiquor(rawLiquor);
+                const tags = liquor.tags || {};
+                const purpose = getArray(tags.purpose);
+                const experience = getArray(tags.experience);
+                const style = getArray(tags.style);
+                const searchText = getSearchText(liquor);
+                switch (filter) {
+                    case 'favorites': return favoriteIds.includes(liquor.id);
+                    case 'gift': return purpose.includes('送禮');
+                    case 'self': return purpose.includes('自飲');
+                    case 'beginner': return experience.includes('第一次喝');
+                    case 'classic': return style.includes('經典');
+                    case 'aged': return liquor.type === '陳年高粱' || /(陳高|陳年|熟陳|老酒|窖藏|特窖)/.test(searchText);
+                    case 'barrel': return liquor.type === '桶陳' || /(桶陳|雪莉桶|波本桶|橡木桶|威士忌桶|雙桶)/.test(searchText);
+                    case 'collectible': return !!tags.collectible || purpose.includes('收藏') || purpose.includes('紀念') || liquor.type === '紀念酒';
+                    case 'special': return !!tags.special || liquor.type === '限量／特色' || ['特別', '金門限定', '造型', '有故事'].some(tag => style.includes(tag));
+                    default: return true;
+                }
+            };
+
+            const filteredLiquors = React.useMemo(() => {
+                const keywords = searchQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+                return liquors.map(normalizeLiquor).filter((liquor) => {
+                    if (!matchesCategory(liquor)) return false;
+                    if (!keywords.length) return true;
+                    const haystack = getSearchText(liquor);
+                    return keywords.every(keyword => haystack.includes(keyword));
+                });
+            }, [liquors, filter, searchQuery, favoriteIds]);
+
+            const recentLiquors = recentIds.map(id => liquors.find(l => l.id === id)).filter(Boolean).slice(0, 5);
+            const viewDetail = (liquor) => { setSelectedLiquor(liquor); setView('detail'); };
+            const hasActiveSearch = searchQuery.trim().length > 0 || filter !== 'all';
+
             return (
-                <div className="max-w-4xl mx-auto px-4 py-8 pb-20">
-                    <div className="flex justify-between items-center mb-6">
-                        <h2 className="text-2xl font-serif font-bold text-km-blue">所有酒款</h2>
-                        <span className="text-sm text-gray-500">共 {filteredLiquors.length} 款</span>
-                    </div>
-                    
-                    <div className="flex space-x-2 overflow-x-auto pb-4 mb-4">
-                        <button onClick={() => setFilter('all')} className={`px-4 py-2 rounded-full text-sm whitespace-nowrap transition-colors ${filter === 'all' ? 'bg-km-blue text-white' : 'bg-white text-gray-600 border border-gray-300'}`}>全部</button>
-                        <button onClick={() => setFilter('<1000')} className={`px-4 py-2 rounded-full text-sm whitespace-nowrap transition-colors ${filter === '<1000' ? 'bg-km-blue text-white' : 'bg-white text-gray-600 border border-gray-300'}`}>千元內親民首選</button>
-                        <button onClick={() => setFilter('1000+')} className={`px-4 py-2 rounded-full text-sm whitespace-nowrap transition-colors ${filter === '1000+' ? 'bg-km-blue text-white' : 'bg-white text-gray-600 border border-gray-300'}`}>千元以上 / 典藏</button>
-                        <button onClick={() => setFilter('gift')} className={`px-4 py-2 rounded-full text-sm whitespace-nowrap transition-colors ${filter === 'gift' ? 'bg-km-blue text-white' : 'bg-white text-gray-600 border border-gray-300'}`}>送禮推薦</button>
+                <div className="max-w-4xl mx-auto px-4 py-8 pb-28">
+                    <div className="flex justify-between items-center mb-5">
+                        <div><h2 className="text-2xl font-serif font-bold text-km-blue">所有酒款</h2><p className="text-xs text-gray-500 mt-1">搜尋酒名、類型、年份、酒精度、風味、口感與用途</p></div>
+                        <span className="text-sm text-gray-500 whitespace-nowrap">共 {filteredLiquors.length} 款</span>
                     </div>
 
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                        {filteredLiquors.map(liquor => (
-                            <div key={liquor.id} className="km-card flex flex-col h-full cursor-pointer hover:shadow-lg transition-shadow" onClick={() => viewDetail(liquor)}>
-                                <div className="bg-gray-100 h-44 flex-shrink-0 relative">
-                                    <img src={liquor.image} alt={liquor.name} className="w-full h-full object-cover"/>
-                                    <div className="absolute bottom-2 right-2 bg-black/60 text-white text-[10px] px-2 py-0.5 rounded backdrop-blur-sm">
-                                        {liquor.volume}ml
-                                    </div>
-                                </div>
-                                <div className="p-4 flex flex-col flex-grow">
-                                    <h3 className="font-bold text-km-blue mb-2 line-clamp-1">{liquor.name}</h3>
-                                    
-                                    <div className="mb-3">
-                                        <LineConsultButton size="small" />
-                                    </div>
-
-                                    <p className="text-xs text-gray-500 mb-3 line-clamp-2 flex-grow">{liquor.text.shortIntro}</p>
-                                    
-                                    <div className="flex flex-wrap mt-auto">
-                                        {liquor.tags.flavor && liquor.tags.flavor.slice(0, 1).map(t => (
-                                            <Tag key={`c-flv-${t}`} text={t} type="flavor" onClick={(e) => { e.stopPropagation(); onFlavorClick(t); }} />
-                                        ))}
-                                        {liquor.tags.taste && liquor.tags.taste.slice(0, 1).map(t => (
-                                            <Tag key={`c-tst-${t}`} text={t} type="taste" />
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
+                    <div className="relative mb-4">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">⌕</div>
+                        <input type="search" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="搜尋酒名、陳高、桶陳、花蜜、58度、送禮……" className="w-full bg-white border-2 border-gray-200 rounded-xl pl-10 pr-10 py-3 text-sm outline-none focus:border-km-gold transition-colors shadow-sm" />
+                        {searchQuery && <button type="button" onClick={() => setSearchQuery('')} className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-km-blue text-xl">&times;</button>}
                     </div>
+                    <div className="flex space-x-2 overflow-x-auto pb-3 mb-3">{categoryOptions.map(option => <button key={option.id} type="button" onClick={() => setFilter(option.id)} className={`px-4 py-2 rounded-full text-sm whitespace-nowrap transition-colors ${filter === option.id ? 'bg-km-blue text-white shadow-sm' : 'bg-white text-gray-600 border border-gray-300 hover:border-km-gold'}`}>{option.label}</button>)}</div>
+
+                    {recentLiquors.length > 0 && !hasActiveSearch && (
+                        <div className="mb-5 p-4 rounded-xl bg-white border border-km-gray">
+                            <div className="text-xs font-bold text-km-blue mb-2">最近看過</div>
+                            <div className="flex gap-2 overflow-x-auto pb-1">{recentLiquors.map(item => <button key={item.id} type="button" onClick={() => viewDetail(item)} className="px-3 py-2 rounded-lg bg-gray-50 border text-xs text-gray-700 whitespace-nowrap hover:border-km-gold">{item.name}</button>)}</div>
+                        </div>
+                    )}
+
+                    {hasActiveSearch && <div className="flex items-center justify-between mb-5 text-xs text-gray-500"><span>{filter !== 'all' && <>分類：<span className="font-bold text-km-blue">{categoryOptions.find(item => item.id === filter)?.label}</span></>}{filter !== 'all' && searchQuery.trim() && <span className="mx-1">·</span>}{searchQuery.trim() && <>搜尋：<span className="font-bold text-km-blue">「{searchQuery.trim()}」</span></>}</span><button type="button" onClick={() => { setFilter('all'); setSearchQuery(''); }} className="text-km-red underline underline-offset-2">清除條件</button></div>}
+
+                    {filteredLiquors.length === 0 ? (
+                        <div className="km-card text-center py-14 px-6"><div className="text-4xl mb-3">🔎</div><h3 className="font-bold text-km-blue mb-2">目前找不到符合條件的酒款</h3><p className="text-sm text-gray-500 mb-5">可以換一個關鍵字，或清除分類後再看看。</p><button type="button" onClick={() => { setFilter('all'); setSearchQuery(''); }} className="px-5 py-2.5 rounded-lg bg-km-blue text-white font-bold text-sm">顯示全部酒款</button></div>
+                    ) : (
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                            {filteredLiquors.map(liquor => (
+                                <div key={liquor.id} className="km-card flex flex-col h-full cursor-pointer hover:shadow-lg transition-shadow" onClick={() => viewDetail(liquor)}>
+                                    <div className="bg-gray-100 h-44 flex-shrink-0 relative">
+                                        <img src={liquor.image} alt={liquor.name} className="w-full h-full object-cover"/>
+                                        <div className="absolute bottom-2 right-2 bg-black/60 text-white text-[10px] px-2 py-0.5 rounded backdrop-blur-sm">{liquor.volume}ml</div>
+                                        <div className={`absolute top-2 left-2 text-[10px] px-2 py-1 rounded-full ${getStockStatus(liquor) === '暫無' ? 'bg-gray-800/80 text-white' : getStockStatus(liquor) === '少量' ? 'bg-amber-500 text-white' : 'bg-white/90 text-km-blue'}`}>{getStockStatus(liquor)}</div>
+                                        <button type="button" onClick={(e) => { e.stopPropagation(); onToggleFavorite(liquor.id); }} className="absolute top-2 right-2 w-8 h-8 rounded-full bg-white/90 shadow text-lg text-km-red">{favoriteIds.includes(liquor.id) ? '♥' : '♡'}</button>
+                                    </div>
+                                    <div className="p-4 flex flex-col flex-grow">
+                                        <div className="text-[10px] text-gray-400 mb-1">{inferLiquorType(liquor)}</div>
+                                        <h3 className="font-bold text-km-blue mb-2 line-clamp-2 min-h-[2.5rem]">{liquor.name}</h3>
+                                        <div className="mb-3 flex flex-col items-start gap-2">
+                                            <InquiryButton liquor={liquor} isInList={inquiryIds.includes(liquor.id)} onToggle={onToggleInquiry} size="small" />
+                                            <CompareButton liquor={liquor} isCompared={compareIds.includes(liquor.id)} onToggle={onToggleCompare} size="small" />
+                                        </div>
+                                        <p className="text-xs text-gray-500 mb-3 line-clamp-2 flex-grow">{liquor.text?.shortIntro}</p>
+                                        <div className="flex flex-wrap mt-auto">{liquor.tags?.flavor?.slice(0, 1).map(t => <Tag key={`c-flv-${t}`} text={t} type="flavor" onClick={(e) => { e.stopPropagation(); onFlavorClick(t); }} />)}{liquor.tags?.taste?.slice(0, 1).map(t => <Tag key={`c-tst-${t}`} text={t} type="taste" />)}</div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
             );
         };
 
-        const Detail = ({ setView, liquor, onFlavorClick }) => {
+        const Detail = ({ setView, liquor, onFlavorClick, inquiryIds, onToggleInquiry, compareIds, onToggleCompare, favoriteIds, onToggleFavorite }) => {
+            const [shareStatus, setShareStatus] = React.useState('');
             if (!liquor) return null;
+            const normalized = normalizeLiquor(liquor);
+
+            const handleShareLink = async () => {
+                const url = getWineShareUrl(normalized.id);
+                try {
+                    if (navigator.share) {
+                        await navigator.share({ title: normalized.name, text: normalized.text?.shortIntro || '怡亨選酒小幫手酒款資訊', url });
+                        return;
+                    }
+                } catch (e) { if (e?.name === 'AbortError') return; }
+                const ok = await copyPlainText(url);
+                setShareStatus(ok ? '已複製酒款分享連結' : '無法自動複製連結');
+                setTimeout(() => setShareStatus(''), 2200);
+            };
+
+            const handleShareImage = async () => {
+                setShareStatus('產生分享圖片中…');
+                const blob = await makeShareBlob({ liquor: normalized });
+                await shareOrDownloadBlob(blob, `${normalized.name}-分享卡.png`, { title: normalized.name, text: '怡亨選酒小幫手酒款分享卡', url: getWineShareUrl(normalized.id) });
+                setShareStatus('分享圖片已準備完成');
+                setTimeout(() => setShareStatus(''), 2200);
+            };
 
             return (
-                <div className="max-w-2xl mx-auto bg-white min-h-screen pb-20 relative shadow-sm">
-                    <button 
-                        onClick={() => setView('catalog')}
-                        className="fixed top-20 left-4 z-20 w-10 h-10 bg-white/90 backdrop-blur rounded-full flex items-center justify-center shadow-md border border-gray-200 text-km-blue hover:bg-gray-100 transition-colors"
-                        title="回總覽"
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                        </svg>
-                    </button>
-
-                    <div className="w-full h-80 md:h-96 bg-gray-100 relative">
-                        <img src={liquor.image} alt={liquor.name} className="w-full h-full object-cover"/>
-                    </div>
+                <div className="max-w-2xl mx-auto bg-white min-h-screen pb-24 relative shadow-sm">
+                    <button onClick={() => setView('catalog')} className="fixed top-20 left-4 z-20 w-10 h-10 bg-white/90 backdrop-blur rounded-full flex items-center justify-center shadow-md border border-gray-200 text-km-blue hover:bg-gray-100 transition-colors" title="回總覽"><svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg></button>
+                    <div className="w-full h-80 md:h-96 bg-gray-100 relative"><img src={normalized.image} alt={normalized.name} className="w-full h-full object-cover"/><div className={`absolute bottom-4 left-4 px-3 py-1.5 rounded-full text-xs font-bold shadow ${getStockStatus(normalized) === '暫無' ? 'bg-gray-800 text-white' : getStockStatus(normalized) === '少量' ? 'bg-amber-500 text-white' : 'bg-white text-km-blue'}`}>{getStockStatus(normalized)}</div></div>
 
                     <div className="p-6">
-                        <div className="flex flex-wrap mb-3">
-                            <Tag text={`${liquor.abv}% Vol`} type="accent" />
-                            <Tag text={`${liquor.volume}ml`} type="default" />
-                            {liquor.age && liquor.age !== "無" && <Tag text={`年份：${liquor.age}`} type="highlight" />}
+                        <div className="flex flex-wrap mb-3"><Tag text={`${normalized.abv}% Vol`} type="accent" /><Tag text={`${normalized.volume}ml`} type="default" /><Tag text={normalized.type} type="default" />{normalized.age && normalized.age !== "無" && <Tag text={`年份：${normalized.age}`} type="highlight" />}</div>
+                        <h2 className="text-3xl font-serif font-bold text-km-blue mb-4">{normalized.name}</h2>
+
+                        <div className="mb-5 flex flex-wrap gap-2">
+                            <FavoriteButton liquorId={normalized.id} isFavorite={favoriteIds.includes(normalized.id)} onToggle={onToggleFavorite} size="normal" />
+                            <CompareButton liquor={normalized} isCompared={compareIds.includes(normalized.id)} onToggle={onToggleCompare} size="normal" />
+                            <button type="button" onClick={handleShareLink} className="px-4 py-2.5 rounded-full border border-km-gold text-km-blue font-bold text-sm bg-white">分享連結</button>
+                            <button type="button" onClick={handleShareImage} className="px-4 py-2.5 rounded-full border border-km-gold bg-km-gold text-white font-bold text-sm">產生分享圖片</button>
                         </div>
-                        
-                        <h2 className="text-3xl font-serif font-bold text-km-blue mb-4">{liquor.name}</h2>
-                        
-                        {/* 專人諮詢按鈕橫幅 */}
-                        <div className="mb-6 p-4 rounded-xl bg-green-50 border border-green-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                            <div>
-                                <span className="text-xs font-bold text-green-700 uppercase tracking-wider block">專人一對一選酒服務</span>
-                                <span className="text-sm text-gray-600 font-medium">歡迎透過官方 LINE 詢問即時牌價與現貨存量</span>
-                            </div>
-                            <LineConsultButton size="normal" />
-                        </div>
-                        
-                        {/* 風味與口感專區 */}
+                        {shareStatus && <div className="mb-4 text-xs font-bold text-km-blue">{shareStatus}</div>}
+
+                        <div className="mb-6 p-4 rounded-xl bg-green-50 border border-green-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3"><div><span className="text-xs font-bold text-green-700 uppercase tracking-wider block">專人一對一選酒服務</span><span className="text-sm text-gray-600 font-medium">歡迎透過官方 LINE 詢問即時牌價與現貨存量</span></div><div className="flex flex-col sm:flex-row gap-2 sm:items-center"><InquiryButton liquor={normalized} isInList={inquiryIds.includes(normalized.id)} onToggle={onToggleInquiry} size="normal" /><LineConsultButton size="normal" /></div></div>
+
                         <div className="mb-6 bg-[#FDFBF7] p-4 rounded-xl border border-km-gray">
-                            <div className="mb-3">
-                                <span className="text-xs font-bold text-km-red block mb-1.5 flex items-center">
-                                    <span className="mr-1">👃</span> 風味特色 (點擊可查看說明)
-                                </span>
-                                <div className="flex flex-wrap">
-                                    {liquor.tags.flavor && liquor.tags.flavor.map(t => (
-                                        <Tag key={`d-flv-${t}`} text={t} type="flavor" onClick={() => onFlavorClick(t)} />
-                                    ))}
-                                </div>
-                            </div>
-                            <div>
-                                <span className="text-xs font-bold text-blue-800 block mb-1.5 flex items-center">
-                                    <span className="mr-1">👅</span> 口感體驗
-                                </span>
-                                <div className="flex flex-wrap">
-                                    {liquor.tags.taste && liquor.tags.taste.map(t => (
-                                        <Tag key={`d-tst-${t}`} text={t} type="taste" />
-                                    ))}
-                                </div>
-                            </div>
+                            <div className="mb-3"><span className="text-xs font-bold text-km-red block mb-1.5">👃 風味特色（點擊可查看說明）</span><div className="flex flex-wrap">{normalized.tags.flavor.map(t => <Tag key={`d-flv-${t}`} text={t} type="flavor" onClick={() => onFlavorClick(t)} />)}</div></div>
+                            <div><span className="text-xs font-bold text-blue-800 block mb-1.5">👅 口感體驗</span><div className="flex flex-wrap">{normalized.tags.taste.map(t => <Tag key={`d-tst-${t}`} text={t} type="taste" />)}</div></div>
                         </div>
 
-                        {/* 商品簡介與商品詳情 */}
-                        <div className="bg-km-white rounded-xl p-5 mb-8 border border-km-gold-light">
-                            <h4 className="font-bold text-km-blue mb-2 flex items-center">
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1 text-km-gold" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                </svg>
-                                商品介紹
-                            </h4>
-                            <p className="text-gray-700 leading-relaxed text-sm mb-5">
-                                {liquor.text.fullIntro || liquor.text.shortIntro}
-                            </p>
+                        <div className="bg-km-white rounded-xl p-5 mb-8 border border-km-gold-light"><h4 className="font-bold text-km-blue mb-2">商品介紹</h4><p className="text-gray-700 leading-relaxed text-sm mb-5">{normalized.text.fullIntro || normalized.text.shortIntro}</p><h4 className="font-bold text-km-blue mb-2 pt-4 border-t border-km-gray">品飲筆記</h4><p className="text-gray-700 leading-relaxed text-sm">{normalized.text.tastingNotes}</p></div>
 
-                            <h4 className="font-bold text-km-blue mb-2 flex items-center pt-4 border-t border-km-gray">
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1 text-km-gold" viewBox="0 0 20 20" fill="currentColor">
-                                  <path fillRule="evenodd" d="M10 2a4 4 0 00-4 4v1H5a1 1 0 00-.994.89l-1 9A1 1 0 004 18h12a1 1 0 00.994-1.11l-1-9A1 1 0 0015 7h-1V6a4 4 0 00-4-4zm2 5V6a2 2 0 10-4 0v1h4zm-6 3a1 1 0 112 0 1 1 0 01-2 0zm7-1a1 1 0 100 2 1 1 0 000-2z" clipRule="evenodd" />
-                                </svg>
-                                品飲筆記 (商品詳情)
-                            </h4>
-                            <p className="text-gray-700 leading-relaxed text-sm">
-                                {liquor.text.tastingNotes}
-                            </p>
-                        </div>
+                        <div className="mb-8"><h3 className="text-lg font-bold text-km-blue mb-4 border-l-4 border-km-gold pl-2">適合對象與場合</h3><div className="flex flex-wrap gap-2">{normalized.tags.target.map(t => <span key={t} className="bg-gray-100 text-gray-700 px-3 py-1 rounded-full text-sm">{t}</span>)}{normalized.tags.purpose.map(t => <span key={t} className="bg-blue-50 text-km-blue px-3 py-1 rounded-full text-sm">{t}</span>)}</div></div>
 
-                        <div className="mb-8">
-                            <h3 className="text-lg font-bold text-km-blue mb-4 border-l-4 border-km-gold pl-2">適合對象與場合</h3>
-                            <div className="flex flex-wrap gap-2">
-                                {liquor.tags.target.map(t => <span key={t} className="bg-gray-100 text-gray-700 px-3 py-1 rounded-full text-sm">{t}</span>)}
-                                {liquor.tags.purpose.map(t => <span key={t} className="bg-blue-50 text-km-blue px-3 py-1 rounded-full text-sm">{t}</span>)}
-                            </div>
-                        </div>
-
-                        {liquor.text.story && (
-                            <div className="mb-8 bg-gray-50 p-5 rounded-lg">
-                                <h3 className="text-lg font-bold text-km-blue mb-2">酒款故事</h3>
-                                <p className="text-gray-600 text-sm leading-relaxed italic serif-text">
-                                    "{liquor.text.story}"
-                                </p>
-                            </div>
-                        )}
+                        {normalized.text.story && <div className="mb-8 bg-gray-50 p-5 rounded-lg"><h3 className="text-lg font-bold text-km-blue mb-2">酒款故事</h3><p className="text-gray-600 text-sm leading-relaxed italic serif-text">「{normalized.text.story}」</p></div>}
                     </div>
                 </div>
             );
@@ -1241,7 +1646,7 @@
             const [dragOverIndex, setDragOverIndex] = React.useState(null);
 
             const saveAndSync = async (updatedList, message) => {
-                setLiquors(updatedList);
+                setLiquors(updatedList.map(normalizeLiquor));
                 setAlertMsg("正在同步至雲端...");
 
                 if (onSaveToCloud) {
@@ -1313,6 +1718,8 @@
                     if (!Array.isArray(cloned.tags[key])) cloned.tags[key] = [];
                 });
                 if (!cloned.text) cloned.text = {};
+                cloned.type = inferLiquorType(cloned);
+                cloned.stockStatus = getStockStatus(cloned);
                 setEditForm(cloned);
                 setIsAdding(false);
             };
@@ -1329,6 +1736,8 @@
                     age: "無",
                     image: `https://placehold.co/300x400/F9F6F0/1A2F4C?text=New\nItem`,
                     stock: true,
+                    stockStatus: "現貨",
+                    type: "一般高粱",
                     tags: { 
                         target: ["長輩", "家人", "自己"], 
                         purpose: ["送禮", "自飲"], 
@@ -1369,6 +1778,9 @@
                 
                 const finalForm = {
                     ...editForm,
+                    type: editForm.type || inferLiquorType(editForm),
+                    stockStatus: editForm.stockStatus || getStockStatus(editForm),
+                    stock: (editForm.stockStatus || getStockStatus(editForm)) !== "暫無",
                     tags: {
                         ...editForm.tags,
                         sizeCategory: finalSizeCat
@@ -1420,6 +1832,56 @@
                         [category]: currentList.filter(t => t !== tag)
                     }
                 });
+            };
+
+            const handleDuplicate = (liquor) => {
+                const base = normalizeLiquor(JSON.parse(JSON.stringify(liquor)));
+                const usedIds = new Set(liquors.map(item => item.id));
+                let seq = liquors.length + 1;
+                let newId = `L${String(seq).padStart(3, '0')}`;
+                while (usedIds.has(newId)) { seq += 1; newId = `L${String(seq).padStart(3, '0')}`; }
+                const copy = { ...base, id: newId, name: `${base.name}（複製）` };
+                setEditingId(newId);
+                setEditForm(copy);
+                setIsAdding(true);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            };
+
+            const handleQuickStock = (liquor, status) => {
+                const updated = liquors.map(item => item.id === liquor.id ? { ...item, stockStatus: status, stock: status !== '暫無' } : item);
+                saveAndSync(updated, `「${liquor.name}」庫存狀態已更新！`);
+            };
+
+            const handleExportJson = () => {
+                const blob = new Blob([JSON.stringify(liquors.map(normalizeLiquor), null, 2)], { type: 'application/json;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `yiheng-wines-${new Date().toISOString().slice(0,10)}.json`;
+                document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+            };
+
+            const handleImportJson = (event) => {
+                const file = event.target.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = async () => {
+                    try {
+                        const parsed = JSON.parse(reader.result);
+                        if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('格式不正確');
+                        const normalized = parsed.map(normalizeLiquor);
+                        const success = await onSaveToCloud(normalized);
+                        if (success) {
+                            setLiquors(normalized);
+                            setAlertMsg(`已匯入 ${normalized.length} 款酒並同步雲端！`);
+                        } else setAlertMsg('匯入後雲端同步失敗，請確認登入狀態。');
+                    } catch (e) {
+                        setAlertMsg('JSON 匯入失敗，請確認檔案是由本後台匯出的酒款資料。');
+                    }
+                    event.target.value = '';
+                    setTimeout(() => setAlertMsg(''), 4000);
+                };
+                reader.readAsText(file, 'utf-8');
             };
 
             const renderForm = () => (
@@ -1486,6 +1948,18 @@
                                         placeholder="如：無、5年、陳高"
                                         className="w-full border rounded-lg p-2.5 focus:border-km-blue outline-none" 
                                     />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">酒款類型</label>
+                                    <select value={editForm.type || inferLiquorType(editForm)} onChange={e => handleChange('type', e.target.value)} className="w-full border rounded-lg p-2.5 focus:border-km-blue outline-none bg-white">
+                                        {PRESET_TYPES.map(type => <option key={type} value={type}>{type}</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">庫存狀態</label>
+                                    <select value={editForm.stockStatus || getStockStatus(editForm)} onChange={e => handleChange('stockStatus', e.target.value)} className="w-full border rounded-lg p-2.5 focus:border-km-blue outline-none bg-white">
+                                        {PRESET_STOCK_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
+                                    </select>
                                 </div>
                                 <div className="md:col-span-3">
                                     <label className="block text-sm font-medium text-gray-700 mb-1">商品圖片網址 (URL)</label>
@@ -1621,17 +2095,6 @@
                                         className="w-full border rounded-lg p-2.5 focus:border-km-blue outline-none h-16 text-sm"
                                     ></textarea>
                                 </div>
-                                <div>
-                                    <label className="flex items-center space-x-2 cursor-pointer pt-2">
-                                        <input 
-                                            type="checkbox" 
-                                            checked={editForm.stock} 
-                                            onChange={e => handleChange('stock', e.target.checked)} 
-                                            className="w-4 h-4 text-km-blue rounded" 
-                                        />
-                                        <span className="text-sm font-bold text-gray-700">目前商品在庫存中（供推薦使用）</span>
-                                    </label>
-                                </div>
                             </div>
                         </div>
                     </div>
@@ -1683,6 +2146,8 @@
                         </div>
                         <div className="flex flex-wrap justify-end gap-2">
                             <Button variant="outline" onClick={handleManualSync} className="w-auto py-2.5 px-4">同步目前資料</Button>
+                            <button type="button" onClick={handleExportJson} className="px-4 py-2.5 rounded-lg border border-km-gold text-km-blue font-bold text-sm">匯出備份</button>
+                            <label className="px-4 py-2.5 rounded-lg border border-km-gold text-km-blue font-bold text-sm cursor-pointer bg-white hover:bg-gray-50">匯入 JSON<input type="file" accept="application/json,.json" onChange={handleImportJson} className="hidden" /></label>
                             <Button variant="outline" onClick={onLogout} className="w-auto py-2.5 px-4">登出</Button>
                             <Button variant="primary" onClick={handleAdd} className="w-auto py-2.5 px-5">＋ 新增酒款</Button>
                         </div>
@@ -1698,6 +2163,7 @@
                                         <th className="p-3.5 border-b text-center w-20">排序</th>
                                         <th className="p-3.5 border-b">圖片</th>
                                         <th className="p-3.5 border-b">名稱 / 容量</th>
+                                        <th className="p-3.5 border-b">類型</th>
                                         <th className="p-3.5 border-b">內部售價</th>
                                         <th className="p-3.5 border-b">風味標籤</th>
                                         <th className="p-3.5 border-b">口感標籤</th>
@@ -1764,9 +2230,8 @@
                                                     <div className="font-bold text-km-blue text-sm">{liquor.name}</div>
                                                     <div className="text-xs text-gray-400">{liquor.volume}ml · {liquor.abv}% Vol</div>
                                                 </td>
-                                                <td className="p-3 text-sm font-mono font-bold text-gray-800">
-                                                    NT$ {liquor.price}
-                                                </td>
+                                                <td className="p-3"><span className="text-[11px] bg-gray-100 text-gray-700 px-2 py-1 rounded-full">{inferLiquorType(liquor)}</span></td>
+                                                <td className="p-3 text-sm font-mono font-bold text-gray-800">NT$ {liquor.price}</td>
                                                 <td className="p-3">
                                                     <div className="flex flex-wrap gap-1 max-w-[160px]">
                                                         {liquor.tags.flavor && liquor.tags.flavor.map(f => (
@@ -1782,12 +2247,13 @@
                                                     </div>
                                                 </td>
                                                 <td className="p-3 text-center">
-                                                    <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${liquor.stock ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                                                        {liquor.stock ? '有' : '無'}
-                                                    </span>
+                                                    <select value={getStockStatus(liquor)} onChange={(e) => handleQuickStock(liquor, e.target.value)} className="text-xs border rounded-lg px-2 py-1 bg-white">
+                                                        {PRESET_STOCK_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
+                                                    </select>
                                                 </td>
                                                 <td className="p-3 text-right whitespace-nowrap">
                                                     <button onClick={() => handleEdit(liquor)} className="text-blue-600 hover:text-blue-800 mr-3 text-sm font-bold">編輯</button>
+                                                    <button onClick={() => handleDuplicate(liquor)} className="text-km-gold hover:text-km-blue mr-3 text-sm font-bold">複製</button>
                                                     <button onClick={() => setConfirmDeleteId(liquor.id)} className="text-red-500 hover:text-red-700 text-sm font-medium">刪除</button>
                                                 </td>
                                             </tr>
@@ -1839,15 +2305,39 @@
                     const localSaved = localStorage.getItem('yiheng_liquors_catalog_v1') || localStorage.getItem('yihan_liquors_catalog_v1');
                     if (localSaved) {
                         const parsed = JSON.parse(localSaved);
-                        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+                        if (Array.isArray(parsed) && parsed.length > 0) return parsed.map(normalizeLiquor);
                     }
                 } catch(e) {}
-                return initialLiquors;
+                return initialLiquors.map(normalizeLiquor);
             });
             const [quizResults, setQuizResults] = React.useState(null);
             const [selectedLiquor, setSelectedLiquor] = React.useState(null);
             const [activeFlavor, setActiveFlavor] = React.useState(null);
             const [cloudStatus, setCloudStatus] = React.useState('connecting'); // 'connecting' | 'synced' | 'saving' | 'empty' | 'offline'
+            const [inquiryIds, setInquiryIds] = React.useState(() => {
+                try {
+                    const saved = localStorage.getItem('yiheng_inquiry_list_v1');
+                    const parsed = saved ? JSON.parse(saved) : [];
+                    return Array.isArray(parsed) ? parsed : [];
+                } catch (e) {
+                    return [];
+                }
+            });
+            const [showInquiryList, setShowInquiryList] = React.useState(false);
+            const [inquiryPrefs, setInquiryPrefs] = React.useState(() => {
+                try { return JSON.parse(localStorage.getItem('yiheng_inquiry_prefs_v1') || '{}'); } catch (e) { return {}; }
+            });
+            const [compareIds, setCompareIds] = React.useState(() => {
+                try { const data = JSON.parse(localStorage.getItem('yiheng_compare_v1') || '[]'); return Array.isArray(data) ? data : []; } catch (e) { return []; }
+            });
+            const [showCompare, setShowCompare] = React.useState(false);
+            const [favoriteIds, setFavoriteIds] = React.useState(() => {
+                try { const data = JSON.parse(localStorage.getItem('yiheng_favorites_v1') || '[]'); return Array.isArray(data) ? data : []; } catch (e) { return []; }
+            });
+            const [recentIds, setRecentIds] = React.useState(() => {
+                try { const data = JSON.parse(localStorage.getItem('yiheng_recent_v1') || '[]'); return Array.isArray(data) ? data : []; } catch (e) { return []; }
+            });
+            const deepLinkHandled = React.useRef(false);
 
             const [showLogin, setShowLogin] = React.useState(false);
             const [isAdminAuth, setIsAdminAuth] = React.useState(false);
@@ -1889,7 +2379,7 @@
                         unsubscribe = window.__cloudStorage.subscribeLiquors(
                             (savedItems) => {
                                 if (savedItems && savedItems.length > 0) {
-                                    setLiquors(savedItems);
+                                    setLiquors(savedItems.map(normalizeLiquor));
                                     setCloudStatus('synced');
                                 } else if (savedItems === null) {
                                     // Firestore 尚無資料：先使用內建/本機快取資料，等管理員登入後手動首次同步。
@@ -1925,19 +2415,92 @@
             }, [view]);
 
             const handleSaveToCloud = async (newLiquors) => {
+                const normalizedLiquors = newLiquors.map(normalizeLiquor);
                 try {
-                    localStorage.setItem('yiheng_liquors_catalog_v1', JSON.stringify(newLiquors));
+                    localStorage.setItem('yiheng_liquors_catalog_v1', JSON.stringify(normalizedLiquors));
                 } catch(e) {}
 
                 if (window.__cloudStorage && window.__cloudStorage.isReady) {
                     setCloudStatus('saving');
-                    const success = await window.__cloudStorage.saveLiquors(newLiquors);
+                    const success = await window.__cloudStorage.saveLiquors(normalizedLiquors);
                     setCloudStatus(success ? 'synced' : 'offline');
                     return success;
                 }
 
                 setCloudStatus('offline');
                 return false;
+            };
+
+            React.useEffect(() => {
+                try {
+                    localStorage.setItem('yiheng_inquiry_list_v1', JSON.stringify(inquiryIds));
+                } catch (e) {}
+            }, [inquiryIds]);
+
+            React.useEffect(() => { try { localStorage.setItem('yiheng_inquiry_prefs_v1', JSON.stringify(inquiryPrefs)); } catch (e) {} }, [inquiryPrefs]);
+            React.useEffect(() => { try { localStorage.setItem('yiheng_compare_v1', JSON.stringify(compareIds)); } catch (e) {} }, [compareIds]);
+            React.useEffect(() => { try { localStorage.setItem('yiheng_favorites_v1', JSON.stringify(favoriteIds)); } catch (e) {} }, [favoriteIds]);
+            React.useEffect(() => { try { localStorage.setItem('yiheng_recent_v1', JSON.stringify(recentIds)); } catch (e) {} }, [recentIds]);
+
+            React.useEffect(() => {
+                if (!isAgeVerified || deepLinkHandled.current) return;
+                const params = new URLSearchParams(window.location.search);
+                const listParam = params.get('list');
+                if (listParam) {
+                    const ids = listParam.split(',').map(id => decodeURIComponent(id.trim())).filter(Boolean);
+                    if (ids.length) setInquiryIds(current => Array.from(new Set([...current, ...ids])));
+                }
+                const wineId = params.get('wine');
+                if (wineId) {
+                    const found = liquors.find(item => item.id === wineId);
+                    if (!found) return;
+                    setSelectedLiquor(found);
+                    setView('detail');
+                }
+                deepLinkHandled.current = true;
+            }, [isAgeVerified, liquors]);
+
+            React.useEffect(() => {
+                if (!selectedLiquor?.id || view !== 'detail') return;
+                setRecentIds(current => [selectedLiquor.id, ...current.filter(id => id !== selectedLiquor.id)].slice(0, 10));
+            }, [selectedLiquor?.id, view]);
+
+            const toggleCompare = (liquorId) => {
+                setCompareIds(current => {
+                    if (current.includes(liquorId)) return current.filter(id => id !== liquorId);
+                    if (current.length >= 3) {
+                        window.alert('一次最多比較 3 款酒。');
+                        return current;
+                    }
+                    return [...current, liquorId];
+                });
+            };
+
+            const toggleFavorite = (liquorId) => {
+                setFavoriteIds(current => current.includes(liquorId) ? current.filter(id => id !== liquorId) : [...current, liquorId]);
+            };
+
+            const toggleInquiry = (liquorId) => {
+                setInquiryIds((current) => current.includes(liquorId)
+                    ? current.filter(id => id !== liquorId)
+                    : [...current, liquorId]
+                );
+            };
+
+            const inquiryItems = React.useMemo(() => {
+                return inquiryIds
+                    .map(id => liquors.find(liquor => liquor.id === id))
+                    .filter(Boolean);
+            }, [inquiryIds, liquors]);
+
+            const compareItems = React.useMemo(() => compareIds.map(id => liquors.find(liquor => liquor.id === id)).filter(Boolean), [compareIds, liquors]);
+
+            const removeInquiry = (liquorId) => {
+                setInquiryIds(current => current.filter(id => id !== liquorId));
+            };
+
+            const clearInquiry = () => {
+                setInquiryIds([]);
             };
 
             if (!isAgeVerified) {
@@ -1969,9 +2532,9 @@
                     <main className="flex-grow w-full relative">
                         {view === 'home' && <Home setView={setView} />}
                         {view === 'quiz' && <Quiz setView={setView} setQuizResults={setQuizResults} liquors={liquors} />}
-                        {view === 'results' && <Results setView={setView} results={quizResults} setSelectedLiquor={setSelectedLiquor} onFlavorClick={setActiveFlavor} />}
-                        {view === 'catalog' && <Catalog setView={setView} liquors={liquors} setSelectedLiquor={setSelectedLiquor} onFlavorClick={setActiveFlavor} />}
-                        {view === 'detail' && <Detail setView={setView} liquor={selectedLiquor} onFlavorClick={setActiveFlavor} />}
+                        {view === 'results' && <Results setView={setView} results={quizResults} setSelectedLiquor={setSelectedLiquor} onFlavorClick={setActiveFlavor} inquiryIds={inquiryIds} onToggleInquiry={toggleInquiry} compareIds={compareIds} onToggleCompare={toggleCompare} favoriteIds={favoriteIds} onToggleFavorite={toggleFavorite} />}
+                        {view === 'catalog' && <Catalog setView={setView} liquors={liquors} setSelectedLiquor={setSelectedLiquor} onFlavorClick={setActiveFlavor} inquiryIds={inquiryIds} onToggleInquiry={toggleInquiry} compareIds={compareIds} onToggleCompare={toggleCompare} favoriteIds={favoriteIds} onToggleFavorite={toggleFavorite} recentIds={recentIds} />}
+                        {view === 'detail' && <Detail setView={setView} liquor={selectedLiquor} onFlavorClick={setActiveFlavor} inquiryIds={inquiryIds} onToggleInquiry={toggleInquiry} compareIds={compareIds} onToggleCompare={toggleCompare} favoriteIds={favoriteIds} onToggleFavorite={toggleFavorite} />}
                         {view === 'admin' && (
                             <Admin 
                                 liquors={liquors} 
@@ -1984,7 +2547,33 @@
                         )}
                     </main>
 
+                    {view !== 'admin' && view !== 'quiz' && compareItems.length > 0 && (
+                        <button type="button" onClick={() => setShowCompare(true)} className="fixed left-4 bottom-5 z-[90] bg-km-blue text-white rounded-full shadow-xl px-4 py-3 font-bold text-sm flex items-center gap-2 hover:bg-opacity-95 active:scale-95 transition-all">
+                            <span>⇄</span><span>比較</span><span className="bg-white text-km-blue min-w-[1.5rem] h-6 px-1 rounded-full inline-flex items-center justify-center text-xs">{compareItems.length}</span>
+                        </button>
+                    )}
+
+                    {view !== 'admin' && view !== 'quiz' && inquiryItems.length > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => setShowInquiryList(true)}
+                            className="fixed right-4 bottom-5 z-[90] bg-km-gold text-white rounded-full shadow-xl px-4 py-3 font-bold text-sm flex items-center gap-2 hover:bg-opacity-95 active:scale-95 transition-all"
+                        >
+                            <span>📝</span>
+                            <span>詢問清單</span>
+                            <span className="bg-white text-km-blue min-w-[1.5rem] h-6 px-1 rounded-full inline-flex items-center justify-center text-xs">{inquiryItems.length}</span>
+                        </button>
+                    )}
+
                     <FlavorModal flavorKey={activeFlavor} onClose={() => setActiveFlavor(null)} />
+
+                    {showInquiryList && (
+                        <InquiryListModal items={inquiryItems} onRemove={removeInquiry} onClear={clearInquiry} onClose={() => setShowInquiryList(false)} prefs={inquiryPrefs} onPrefsChange={setInquiryPrefs} />
+                    )}
+
+                    {showCompare && (
+                        <CompareModal items={compareItems} onRemove={(id) => setCompareIds(current => current.filter(itemId => itemId !== id))} onClear={() => setCompareIds([])} onClose={() => setShowCompare(false)} inquiryIds={inquiryIds} onToggleInquiry={toggleInquiry} />
+                    )}
 
                     {showLogin && (
                         <LoginModal 
