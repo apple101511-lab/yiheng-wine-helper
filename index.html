@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>怡亨選酒小幫手</title>
+    <link rel="icon" type="image/png" href="images/logo.png">
+    <link rel="apple-touch-icon" href="images/logo.png">
     
     <!-- 載入 Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -41,7 +43,7 @@
     <!-- 載入 Babel 以解析 JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- Firebase 雲端資料同步服務 -->
+    <!-- Firebase 雲端資料同步服務（Firestore / Authentication） -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import {
@@ -76,6 +78,97 @@
         const auth = getAuth(app);
         const db = getFirestore(app);
         let currentUser = auth.currentUser;
+
+        const MAX_IMAGE_UPLOAD_BYTES = 12 * 1024 * 1024;
+        const IMAGE_MAX_DIMENSION = 1600;
+        const IMAGE_WEBP_QUALITY = 0.9;
+        const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+        const sanitizeImageFileName = (value) => String(value || "wine")
+            .trim()
+            .replace(/[^a-zA-Z0-9_-]/g, "-")
+            .replace(/-+/g, "-")
+            .replace(/^-|-$/g, "") || "wine";
+
+        const loadBrowserImage = (file) => new Promise((resolve, reject) => {
+            const url = URL.createObjectURL(file);
+            const image = new Image();
+            image.onload = () => {
+                URL.revokeObjectURL(url);
+                resolve(image);
+            };
+            image.onerror = () => {
+                URL.revokeObjectURL(url);
+                reject(new Error("瀏覽器無法讀取這張圖片，請改用 JPG、PNG 或 WebP。"));
+            };
+            image.src = url;
+        });
+
+        const optimizeWineImage = async (file) => {
+            if (!file || !ACCEPTED_IMAGE_TYPES.has(file.type)) {
+                throw new Error("請選擇 JPG、PNG 或 WebP 圖片。HEIC/HEIF 請先轉成 JPG。" );
+            }
+            if (file.size > MAX_IMAGE_UPLOAD_BYTES) {
+                throw new Error("圖片檔案太大，請選擇 12MB 以下的圖片。" );
+            }
+
+            const image = await loadBrowserImage(file);
+            const originalWidth = image.naturalWidth || image.width;
+            const originalHeight = image.naturalHeight || image.height;
+            const scale = Math.min(1, IMAGE_MAX_DIMENSION / Math.max(originalWidth, originalHeight));
+            const width = Math.max(1, Math.round(originalWidth * scale));
+            const height = Math.max(1, Math.round(originalHeight * scale));
+
+            const canvas = document.createElement("canvas");
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext("2d", { alpha: true });
+            if (!ctx) throw new Error("無法處理圖片，請重新整理後再試一次。" );
+            ctx.drawImage(image, 0, 0, width, height);
+
+            const blob = await new Promise((resolve) => {
+                canvas.toBlob(resolve, "image/webp", IMAGE_WEBP_QUALITY);
+            });
+            if (!blob) throw new Error("圖片轉檔失敗，請換一張圖片再試。" );
+
+            return {
+                blob,
+                width,
+                height,
+                originalBytes: file.size,
+                optimizedBytes: blob.size
+            };
+        };
+
+        // 酒款圖片本機處理工具：不使用 Firebase Storage。
+        // 圖片會在瀏覽器端轉成 WebP，並建議放到 GitHub Pages 的 images/wines/。
+        window.__wineImageTools = {
+            prepareWineImage: async (file, wineId) => {
+                try {
+                    const optimized = await optimizeWineImage(file);
+                    const safeWineId = sanitizeImageFileName(wineId);
+                    const filename = `${safeWineId}.webp`;
+                    const relativePath = `images/wines/${filename}`;
+
+                    return {
+                        success: true,
+                        blob: optimized.blob,
+                        filename,
+                        relativePath,
+                        width: optimized.width,
+                        height: optimized.height,
+                        originalBytes: optimized.originalBytes,
+                        optimizedBytes: optimized.optimizedBytes
+                    };
+                } catch (error) {
+                    console.error("酒款圖片處理失敗：", error);
+                    return {
+                        success: false,
+                        error: error?.message || "圖片處理失敗"
+                    };
+                }
+            }
+        };
 
         // 提供 React 使用的 Firebase 操作介面
         window.__cloudStorage = {
@@ -1226,7 +1319,7 @@ h1{font-size:24px;line-height:1.35;margin:16px 0 8px}.meta{font-size:14px;color:
                 <div className="max-w-4xl mx-auto px-4 py-3 flex justify-between items-center">
                     <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setView('home')}>
                         <img 
-                            src="https://cdn.phototourl.com/free/2026-09-16-3e94f8d2-adfa-4360-bb16-4a2d8e67ef7c.png" 
+                            src="images/logo.png" 
                             alt="怡亨 Logo" 
                             className="h-10 w-auto"
                             onError={(e) => {
@@ -1266,7 +1359,7 @@ h1{font-size:24px;line-height:1.35;margin:16px 0 8px}.meta{font-size:14px;color:
             <div className="flex flex-col items-center justify-center min-h-[80vh] px-6 text-center max-w-lg mx-auto py-10">
                 <div className="mb-8 transform hover:scale-105 transition-transform duration-300">
                      <img 
-                        src="https://cdn.phototourl.com/free/2026-09-16-3e94f8d2-adfa-4360-bb16-4a2d8e67ef7c.png" 
+                        src="images/logo.png" 
                         alt="怡亨選酒小幫手 Logo" 
                         className="h-32 w-auto drop-shadow-md"
                         onError={(e) => {
@@ -1876,6 +1969,16 @@ h1{font-size:24px;line-height:1.35;margin:16px 0 8px}.meta{font-size:14px;color:
             const [batchTagCategory, setBatchTagCategory] = React.useState('purpose');
             const [batchTagValue, setBatchTagValue] = React.useState(PRESET_PURPOSES[0]);
             const [syncSeriesOnSave, setSyncSeriesOnSave] = React.useState(false);
+            const [imageProcessState, setImageProcessState] = React.useState({ status: 'idle', progress: 0, message: '' });
+            const [localImagePreview, setLocalImagePreview] = React.useState('');
+            const [preparedImage, setPreparedImage] = React.useState(null);
+            const imageFileInputRef = React.useRef(null);
+
+            React.useEffect(() => {
+                return () => {
+                    if (localImagePreview) URL.revokeObjectURL(localImagePreview);
+                };
+            }, [localImagePreview]);
 
             React.useEffect(() => {
                 const presets = BATCH_TAG_PRESETS[batchTagCategory] || [];
@@ -1964,6 +2067,9 @@ h1{font-size:24px;line-height:1.35;margin:16px 0 8px}.meta{font-size:14px;color:
                 cloned.publicationStatus = getPublicationStatus(cloned);
                 setEditForm(cloned);
                 setSyncSeriesOnSave(false);
+                setImageProcessState({ status: 'idle', progress: 0, message: '' });
+                setPreparedImage(null);
+                setLocalImagePreview('');
                 setIsAdding(false);
             };
 
@@ -1977,7 +2083,7 @@ h1{font-size:24px;line-height:1.35;margin:16px 0 8px}.meta{font-size:14px;color:
                     abv: 58,
                     volume: 600,
                     age: "無",
-                    image: `https://placehold.co/300x400/F9F6F0/1A2F4C?text=New\nItem`,
+                    image: "",
                     stock: true,
                     stockStatus: "現貨",
                     publicationStatus: "草稿",
@@ -2004,7 +2110,58 @@ h1{font-size:24px;line-height:1.35;margin:16px 0 8px}.meta{font-size:14px;color:
                     }
                 });
                 setSyncSeriesOnSave(false);
+                setImageProcessState({ status: 'idle', progress: 0, message: '' });
+                setPreparedImage(null);
+                setLocalImagePreview('');
                 setIsAdding(true);
+            };
+
+            const downloadPreparedImage = (payload = preparedImage) => {
+                if (!payload?.blob || !payload?.filename) return;
+                const downloadUrl = URL.createObjectURL(payload.blob);
+                const link = document.createElement('a');
+                link.href = downloadUrl;
+                link.download = payload.filename;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                setTimeout(() => URL.revokeObjectURL(downloadUrl), 1500);
+            };
+
+            const handleImageFileSelected = async (event) => {
+                const file = event.target.files && event.target.files[0];
+                event.target.value = '';
+                if (!file || !editForm) return;
+
+                const processor = window.__wineImageTools?.prepareWineImage;
+                if (typeof processor !== 'function') {
+                    setImageProcessState({ status: 'error', progress: 0, message: '圖片處理工具尚未就緒，請重新整理頁面後再試。' });
+                    return;
+                }
+
+                setImageProcessState({ status: 'processing', progress: 35, message: '正在縮圖並轉成 WebP…' });
+                const result = await processor(file, editForm.id);
+
+                if (!result?.success) {
+                    setImageProcessState({ status: 'error', progress: 0, message: result?.error || '圖片處理失敗。' });
+                    return;
+                }
+
+                const previewUrl = URL.createObjectURL(result.blob);
+                setLocalImagePreview(previewUrl);
+                setPreparedImage(result);
+                setEditForm(current => current ? { ...current, image: result.relativePath } : current);
+
+                // 直接把處理後圖片下載到電腦，之後上傳到 GitHub /images/wines/
+                downloadPreparedImage(result);
+
+                const originalKB = Math.max(1, Math.round((result.originalBytes || 0) / 1024));
+                const optimizedKB = Math.max(1, Math.round((result.optimizedBytes || 0) / 1024));
+                setImageProcessState({
+                    status: 'success',
+                    progress: 100,
+                    message: `已產生 ${result.filename}（${result.width}×${result.height}px，約 ${originalKB}KB → ${optimizedKB}KB）。圖片路徑已設定為 ${result.relativePath}。請把下載的檔案上傳到 GitHub 的 images/wines/，再按「儲存商品」。`
+                });
             };
 
             const handleSave = () => {
@@ -2345,13 +2502,89 @@ h1{font-size:24px;line-height:1.35;margin:16px 0 8px}.meta{font-size:14px;color:
                                     )}
                                 </div>
                                 <div className="md:col-span-3">
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">商品圖片網址 (URL)</label>
-                                    <input 
-                                        type="text" 
-                                        value={editForm.image} 
-                                        onChange={e => handleChange('image', e.target.value)} 
-                                        className="w-full border rounded-lg p-2.5 focus:border-km-blue outline-none text-sm text-gray-600" 
-                                    />
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">商品圖片</label>
+                                    <div className="grid grid-cols-1 md:grid-cols-[160px_1fr] gap-4 bg-white border rounded-xl p-4">
+                                        <div className="aspect-square rounded-xl overflow-hidden bg-gray-100 border flex items-center justify-center">
+                                            {(localImagePreview || editForm.image) ? (
+                                                <img src={localImagePreview || editForm.image} alt={editForm.name || '酒款圖片預覽'} className="w-full h-full object-contain" />
+                                            ) : (
+                                                <div className="text-xs text-gray-400 text-center px-3">尚未設定圖片</div>
+                                            )}
+                                        </div>
+                                        <div className="space-y-3">
+                                            <input
+                                                ref={imageFileInputRef}
+                                                type="file"
+                                                accept="image/jpeg,image/png,image/webp"
+                                                onChange={handleImageFileSelected}
+                                                className="hidden"
+                                            />
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => imageFileInputRef.current?.click()}
+                                                    disabled={imageProcessState.status === 'processing'}
+                                                    className={`px-4 py-2.5 rounded-lg text-sm font-bold transition ${imageProcessState.status === 'processing' ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-km-blue text-white hover:bg-opacity-90'}`}
+                                                >
+                                                    {imageProcessState.status === 'processing' ? '圖片處理中…' : '🖼 選擇圖片並產生 WebP'}
+                                                </button>
+                                                <span className="text-xs text-gray-500">支援 JPG / PNG / WebP，單檔 12MB 以下</span>
+                                                {editForm.image && (
+                                                    <span className={`text-[11px] px-2 py-1 rounded-full font-bold ${
+                                                        editForm.image.startsWith('images/wines/')
+                                                            ? 'bg-emerald-100 text-emerald-700'
+                                                            : /^https?:\/\//.test(editForm.image)
+                                                                ? 'bg-amber-100 text-amber-700'
+                                                                : 'bg-gray-100 text-gray-600'
+                                                    }`}>
+                                                        {editForm.image.startsWith('images/wines/')
+                                                            ? '✓ GitHub 圖片路徑'
+                                                            : /^https?:\/\//.test(editForm.image)
+                                                                ? '⚠ 外部圖片網址'
+                                                                : '圖片路徑已設定'}
+                                                    </span>
+                                                )}
+                                            </div>
+
+                                            {imageProcessState.status === 'processing' && (
+                                                <div>
+                                                    <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                                                        <div className="h-full bg-km-gold transition-all" style={{ width: `${Math.max(2, imageProcessState.progress || 0)}%` }}></div>
+                                                    </div>
+                                                    <p className="text-xs text-gray-500 mt-1">{imageProcessState.message}</p>
+                                                </div>
+                                            )}
+                                            {imageProcessState.status === 'success' && <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg p-2.5">✓ {imageProcessState.message}</p>}
+                                            {imageProcessState.status === 'error' && <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-2.5">⚠ {imageProcessState.message}</p>}
+
+                                            <div className="text-[11px] text-gray-500 leading-relaxed bg-amber-50 border border-amber-200 rounded-lg p-3">
+                                                <p>圖片會在瀏覽器端自動縮到長邊最多 1600px、轉成 WebP，並命名為 <code className="bg-white px-1 rounded">{editForm.id}.webp</code>。</p>
+                                                <p className="mt-1">處理完成後會自動下載到你的電腦，並把酒款圖片路徑設成 <code className="bg-white px-1 rounded">images/wines/{editForm.id}.webp</code>。接著只要把該檔案上傳到 GitHub 專案的 <code className="bg-white px-1 rounded">images/wines/</code> 資料夾即可，不需要 Firebase Storage。</p>
+                                            </div>
+
+                                            {preparedImage && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => downloadPreparedImage()}
+                                                    className="px-3 py-2 rounded-lg border border-km-blue text-km-blue text-xs font-bold hover:bg-blue-50"
+                                                >
+                                                    ↓ 再次下載 {preparedImage.filename}
+                                                </button>
+                                            )}
+
+                                            <details className="border-t pt-2">
+                                                <summary className="text-xs font-bold text-gray-600 cursor-pointer">進階：手動設定圖片網址／路徑</summary>
+                                                <input
+                                                    type="text"
+                                                    value={editForm.image || ''}
+                                                    onChange={e => handleChange('image', e.target.value)}
+                                                    placeholder="images/wines/L001.webp 或 https://..."
+                                                    className="w-full border rounded-lg p-2.5 focus:border-km-blue outline-none text-sm text-gray-600 mt-2"
+                                                />
+                                                <p className="text-[11px] text-gray-400 mt-1">保留網址輸入是為了相容舊資料。新圖片建議使用上方工具處理後，放到 GitHub 的 images/wines/。</p>
+                                            </details>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -2770,7 +3003,7 @@ h1{font-size:24px;line-height:1.35;margin:16px 0 8px}.meta{font-size:14px;color:
             <div className="fixed inset-0 bg-km-blue flex flex-col items-center justify-center px-4 z-[200]">
                 <div className="bg-km-white p-8 md:p-10 rounded-2xl shadow-2xl border-4 border-km-gold-light max-w-sm w-full text-center">
                     <img 
-                        src="https://cdn.phototourl.com/free/2026-09-16-3e94f8d2-adfa-4360-bb16-4a2d8e67ef7c.png" 
+                        src="images/logo.png" 
                         alt="怡亨 Logo" 
                         className="h-24 w-auto mx-auto mb-6 drop-shadow-md"
                         onError={(e) => {
