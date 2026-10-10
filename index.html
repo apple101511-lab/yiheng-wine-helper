@@ -64,7 +64,8 @@
             ref as storageRef,
             uploadBytesResumable,
             getDownloadURL,
-            deleteObject
+            deleteObject,
+            getBlob
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
 
         // Firebase Web App 設定
@@ -202,6 +203,38 @@
 
             isAdmin: () => {
                 return !!currentUser && currentUser.uid === ADMIN_UID;
+            },
+
+            getFirebaseImageObjectUrl: async (sourceUrl = "") => {
+                try {
+                    const storagePath = getOwnStoragePathFromUrl(sourceUrl);
+                    if (!storagePath) {
+                        return {
+                            success: false,
+                            url: sourceUrl,
+                            cleanup: null,
+                            source: "external"
+                        };
+                    }
+
+                    const blob = await getBlob(storageRef(storage, storagePath));
+                    const objectUrl = URL.createObjectURL(blob);
+                    return {
+                        success: true,
+                        url: objectUrl,
+                        cleanup: () => URL.revokeObjectURL(objectUrl),
+                        source: "firebase"
+                    };
+                } catch (error) {
+                    console.warn("Firebase Storage 圖片讀取失敗，將退回原始網址：", error);
+                    return {
+                        success: false,
+                        url: sourceUrl,
+                        cleanup: null,
+                        source: "firebase",
+                        error: error?.message || "圖片讀取失敗"
+                    };
+                }
             },
 
             uploadWineImage: async (file, wineId, previousImageUrl = "", onProgress = null) => {
@@ -643,77 +676,6 @@
 
         const getQrImageUrl = (url) => `https://quickchart.io/qr?text=${encodeURIComponent(url)}&size=420&margin=1&dark=1A2F4C&light=FFFFFF`;
         const OFFICIAL_LINE_URL = "https://lin.ee/9O8E0wy";
-        const getCurrentBrandLogoUrl = () => window.__currentSiteLogoUrl || DEFAULT_LOGO_URL;
-
-        const openPrintableQrCard = (liquor = {}) => {
-            const item = normalizeLiquor(liquor);
-            const helperUrl = getWineShareUrl(item.id);
-            const lineUrl = OFFICIAL_LINE_URL;
-            const logoUrl = getCurrentBrandLogoUrl();
-            const popup = window.open("", "_blank", "width=920,height=1180");
-            if (!popup) {
-                window.alert("瀏覽器阻擋了酒卡視窗，請允許此網站開啟彈出式視窗後再試一次。");
-                return;
-            }
-
-            const flavorText = (item.tags?.flavor || []).slice(0, 4).join("・") || "依酒款資料為準";
-            const tasteText = (item.tags?.taste || []).slice(0, 4).join("・") || "依酒款資料為準";
-            const targetText = (item.tags?.target || []).slice(0, 3).join("・") || "依店家推薦為準";
-            const purposeText = (item.tags?.purpose || []).slice(0, 3).join("・") || "送禮、自飲皆宜";
-            const introText = item.text?.shortIntro || item.text?.fullIntro || item.text?.reason || "歡迎加入官方 LINE，洽詢酒款特色、牌價與現貨。";
-
-            popup.document.open();
-            popup.document.write(`<!doctype html>
-<html lang="zh-TW"><head><meta charset="utf-8"><title>${escapeHtml(item.name)} 精品酒卡</title>
-<style>
-body{font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",sans-serif;background:#ece7dd;margin:0;padding:28px;color:#1A2F4C}
-.sheet{max-width:820px;margin:0 auto}.actions{text-align:center;margin:0 0 18px}
-.actions button{border:0;background:#1A2F4C;color:#fff;border-radius:12px;padding:11px 20px;font-weight:700;cursor:pointer}
-.card{position:relative;background:linear-gradient(180deg,#fffdf8 0%,#ffffff 100%);border:1px solid #d7d0c2;border-radius:30px;padding:0;box-shadow:0 14px 40px rgba(0,0,0,.08);overflow:hidden}
-.card:before{content:"";position:absolute;inset:18px;border:1.5px solid #C5A059;border-radius:22px;pointer-events:none}
-.hero{background:linear-gradient(135deg,#14263f 0%,#1f3556 72%,#29456e 100%);padding:34px 42px 32px;position:relative;color:#fff}
-.hero:after{content:"";position:absolute;right:-90px;top:-90px;width:240px;height:240px;border-radius:50%;background:radial-gradient(circle,#d9bb72 0%,rgba(217,187,114,.15) 35%,rgba(217,187,114,0) 70%)}
-.logoRow{display:flex;align-items:center;gap:18px;position:relative;z-index:1}.brandLogo{width:86px;height:86px;object-fit:contain;background:rgba(255,255,255,.96);border-radius:50%;padding:10px;box-shadow:0 6px 18px rgba(0,0,0,.14)}
-.brandText{min-width:0}.brand{font-size:30px;font-weight:900;letter-spacing:.08em}.sub{font-size:13px;color:#E8D5A5;letter-spacing:.28em;font-weight:700;margin-top:6px}
-.content{padding:28px 36px 34px}.top{display:grid;grid-template-columns:280px 1fr;gap:28px;align-items:start;margin-top:-50px;position:relative;z-index:2}.wineWrap{background:linear-gradient(180deg,#fff 0%,#faf6ee 100%);border:1px solid #e4ddd0;border-radius:22px;padding:18px;min-height:390px;display:flex;align-items:center;justify-content:center;box-shadow:0 12px 28px rgba(30,43,67,.08)}
-.wine{width:100%;max-width:230px;max-height:348px;object-fit:contain}.infoCard{background:#fff;border:1px solid #ece4d5;border-radius:22px;padding:24px 24px 22px;box-shadow:0 10px 26px rgba(26,47,76,.05)}
-.name{font-size:30px;line-height:1.35;font-weight:900;color:#1A2F4C;margin:0 0 12px}.meta{font-size:14px;color:#666;margin-bottom:16px}.divider{height:1px;background:linear-gradient(90deg,#C5A059 0%,rgba(197,160,89,.15) 100%);margin:14px 0 16px}.label{font-size:13px;font-weight:900;color:#8B6E3B;letter-spacing:.12em;margin-bottom:8px}.chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}.chip{display:inline-flex;align-items:center;padding:7px 13px;border-radius:999px;font-size:12px;background:#F4E7C5;color:#5a4a24}.chip.secondary{background:#E8EEF6;color:#29415f}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}.miniBox{background:#FBFAF7;border:1px solid #ECE6D9;border-radius:16px;padding:14px}.miniText{font-size:13px;line-height:1.75;color:#555}.intro{margin-top:16px;background:linear-gradient(180deg,#fff 0%,#fbfaf7 100%);border:1px solid #ECE6D9;border-radius:18px;padding:16px 18px;font-size:14px;line-height:1.85;color:#555}
-.qrSection{margin-top:24px;display:grid;grid-template-columns:1fr 1fr;gap:18px}.qrBox{border:1px solid #E2DFD8;border-radius:22px;padding:18px;background:linear-gradient(180deg,#fcfbf8 0%,#f7f3eb 100%);text-align:center}.qrTitle{font-size:16px;font-weight:900;color:#1A2F4C;margin-bottom:10px}.qr{width:182px;height:182px;object-fit:contain}.qrHint{font-size:12px;color:#777;line-height:1.6;margin-top:9px}.bottomHint{margin-top:18px;font-size:12px;color:#7b766d;line-height:1.75;text-align:center}.warn{margin-top:12px;font-size:11px;color:#A63C30;font-weight:800;text-align:center;letter-spacing:.06em}
-@media print{body{background:#fff;padding:0}.actions{display:none}.sheet{max-width:none}.card{box-shadow:none;border:1px solid #bbb;margin:0}}
-</style></head><body>
-<div class="sheet"><div class="actions"><button onclick="window.print()">列印酒卡</button></div>
-<div class="card">
-  <div class="hero"><div class="logoRow"><img class="brandLogo" src="${escapeHtml(logoUrl)}" alt="怡亨 Logo"><div class="brandText"><div class="brand">怡亨酒舖</div><div class="sub">PREMIUM WINE CARD</div></div></div></div>
-  <div class="content">
-    <div class="top">
-      <div class="wineWrap"><img class="wine" src="${escapeHtml(item.image || "")}" alt="${escapeHtml(item.name)}"></div>
-      <div class="infoCard">
-        <h1 class="name">${escapeHtml(item.name)}</h1>
-        <div class="meta">${escapeHtml(`${item.abv}% Vol ・ ${item.volume}ml ・ ${item.type || "高粱酒"}`)}${item.series ? ` ・ 系列：${escapeHtml(item.series)}` : ""}</div>
-        <div class="divider"></div>
-        <div class="label">風味特色</div>
-        <div class="chips">${flavorText.split("・").filter(Boolean).map(t => `<span class="chip">${escapeHtml(t)}</span>`).join("") || `<span class="chip">依酒款資料為準</span>`}</div>
-        <div class="label">口感體驗</div>
-        <div class="chips">${tasteText.split("・").filter(Boolean).map(t => `<span class="chip secondary">${escapeHtml(t)}</span>`).join("") || `<span class="chip secondary">依酒款資料為準</span>`}</div>
-        <div class="grid2">
-          <div class="miniBox"><div class="label">推薦對象</div><div class="miniText">${escapeHtml(targetText)}</div></div>
-          <div class="miniBox"><div class="label">適合場合</div><div class="miniText">${escapeHtml(purposeText)}</div></div>
-        </div>
-        <div class="intro"><div class="label">酒款簡介</div>${escapeHtml(introText)}</div>
-      </div>
-    </div>
-
-    <div class="qrSection">
-      <div class="qrBox"><div class="qrTitle">選酒小幫手</div><img class="qr" src="${escapeHtml(getQrImageUrl(helperUrl))}" alt="選酒小幫手 QR Code"><div class="qrHint">掃描後可查看這支酒的完整介紹、分享酒款頁面與加入詢問清單。</div></div>
-      <div class="qrBox"><div class="qrTitle">官方 LINE</div><img class="qr" src="${escapeHtml(getQrImageUrl(lineUrl))}" alt="官方 LINE QR Code"><div class="qrHint">掃描後可直接聯繫店家，詢問牌價、現貨與選酒建議。</div></div>
-    </div>
-
-    <div class="bottomHint">本酒卡不含價格資訊；實際牌價、庫存與優惠請以門市或官方 LINE 回覆為準。</div>
-    <div class="warn">禁止酒駕｜未滿十八歲禁止飲酒</div>
-  </div>
-</div></div></body></html>`);
-            popup.document.close();
-        };
 
         const getDerivedAttributes = (liquor = {}) => {
             const tags = liquor.tags || {};
@@ -832,17 +794,58 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",sans-serif;back
             return lines;
         };
 
-        const loadCanvasImage = (src, timeoutMs = 5000) => new Promise(resolve => {
-            if (!src) return resolve(null);
-            const img = new Image();
-            let done = false;
-            const finish = (value) => { if (!done) { done = true; clearTimeout(timer); resolve(value); } };
-            const timer = setTimeout(() => finish(null), timeoutMs);
-            img.crossOrigin = 'anonymous';
-            img.onload = () => finish(img);
-            img.onerror = () => finish(null);
-            img.src = src;
-        });
+        const loadCanvasImage = async (src, timeoutMs = 12000) => {
+            if (!src) return null;
+
+            let finalSrc = src;
+            let cleanupObjectUrl = null;
+            const cloud = window.__cloudStorage;
+
+            // 如果圖片在 Firebase Storage，優先透過 Storage SDK 取回 Blob，再轉成 object URL 給 Canvas 使用。
+            // 這樣比直接把 firebasestorage URL 丟給 <img> 更穩定，能避開部分分享圖跨來源讀取問題。
+            if (cloud?.getFirebaseImageObjectUrl && typeof src === 'string' && src.includes('firebasestorage.googleapis.com')) {
+                try {
+                    const result = await cloud.getFirebaseImageObjectUrl(src);
+                    if (result?.success && result.url) {
+                        finalSrc = result.url;
+                        cleanupObjectUrl = typeof result.cleanup === 'function' ? result.cleanup : null;
+                    }
+                } catch (error) {
+                    console.warn('Firebase Storage 轉 object URL 失敗，改用原始網址：', error);
+                }
+            }
+
+            return await new Promise(resolve => {
+                const img = new Image();
+                let done = false;
+
+                const finish = (value) => {
+                    if (!done) {
+                        done = true;
+                        clearTimeout(timer);
+                        if (cleanupObjectUrl) {
+                            try { cleanupObjectUrl(); } catch (e) {}
+                            cleanupObjectUrl = null;
+                        }
+                        resolve(value);
+                    }
+                };
+
+                const timer = setTimeout(() => finish(null), timeoutMs);
+
+                if (finalSrc === src) {
+                    img.crossOrigin = 'anonymous';
+                    img.referrerPolicy = 'no-referrer';
+                }
+
+                img.onload = () => finish(img);
+                img.onerror = () => {
+                    console.warn('分享圖片無法讀取此圖片來源：', src);
+                    finish(null);
+                };
+                img.src = finalSrc;
+            });
+        };
 
         const drawContainedImage = (ctx, img, x, y, w, h) => {
             ctx.fillStyle = '#FFFFFF';
@@ -873,239 +876,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",sans-serif;back
             ctx.restore();
         };
 
-        const makeWineCardBlob = async (liquor) => {
-            const normalized = normalizeLiquor(liquor);
-            const canvas = document.createElement('canvas');
-            canvas.width = 1080;
-            canvas.height = 1720;
-            const ctx = canvas.getContext('2d');
-
-            const roundRectPath = (x, y, w, h, r) => {
-                ctx.beginPath();
-                ctx.roundRect(x, y, w, h, r);
-            };
-
-            const drawChip = (x, y, text, kind='flavor') => {
-                ctx.font = '20px sans-serif';
-                const w = Math.min(180, Math.max(92, ctx.measureText(text).width + 34));
-                ctx.fillStyle = kind === 'flavor' ? '#F4E7C5' : '#E8EEF6';
-                roundRectPath(x, y, w, 40, 20);
-                ctx.fill();
-                ctx.fillStyle = kind === 'flavor' ? '#5A4A24' : '#29415F';
-                ctx.fillText(text, x + 17, y + 26);
-                return w;
-            };
-
-            // Background
-            ctx.fillStyle = '#ECE7DD';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-            // Main card
-            ctx.fillStyle = '#FFFDFA';
-            ctx.strokeStyle = '#D7D0C2';
-            ctx.lineWidth = 2;
-            roundRectPath(44, 44, 992, 1632, 30);
-            ctx.fill();
-            ctx.stroke();
-
-            ctx.strokeStyle = '#C5A059';
-            ctx.lineWidth = 2;
-            roundRectPath(66, 66, 948, 1588, 24);
-            ctx.stroke();
-
-            // Hero band
-            const grad = ctx.createLinearGradient(0, 0, 900, 0);
-            grad.addColorStop(0, '#14263F');
-            grad.addColorStop(0.7, '#203859');
-            grad.addColorStop(1, '#2C4B73');
-            ctx.fillStyle = grad;
-            roundRectPath(44, 44, 992, 250, 30);
-            ctx.fill();
-            ctx.fillStyle = 'rgba(217,187,114,0.16)';
-            ctx.beginPath();
-            ctx.arc(946, 72, 110, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.beginPath();
-            ctx.arc(992, 110, 140, 0, Math.PI * 2);
-            ctx.fill();
-
-            const logoImg = await loadCanvasImage(getCurrentBrandLogoUrl());
-            // small white disc
-            ctx.fillStyle = 'rgba(255,255,255,0.98)';
-            ctx.beginPath();
-            ctx.arc(154, 168, 56, 0, Math.PI * 2);
-            ctx.fill();
-            drawContainedImage(ctx, logoImg, 106, 120, 96, 96);
-
-            ctx.textAlign = 'left';
-            ctx.fillStyle = '#FFFFFF';
-            ctx.font = 'bold 42px sans-serif';
-            ctx.fillText('怡亨酒舖', 238, 164);
-            ctx.fillStyle = '#E8D5A5';
-            ctx.font = 'bold 21px sans-serif';
-            ctx.fillText('PREMIUM WINE CARD', 238, 204);
-
-            // Floating content cards
-            ctx.fillStyle = '#FFFFFF';
-            ctx.strokeStyle = '#E8E0D4';
-            ctx.lineWidth = 2;
-            roundRectPath(86, 232, 318, 455, 24);
-            ctx.fill();
-            ctx.stroke();
-
-            roundRectPath(430, 232, 564, 540, 24);
-            ctx.fill();
-            ctx.stroke();
-
-            // wine image
-            const wineImg = await loadCanvasImage(normalized.image);
-            drawContainedImage(ctx, wineImg, 118, 272, 254, 360);
-            if (!wineImg) {
-                ctx.fillStyle = '#A63C30';
-                ctx.font = '16px sans-serif';
-                ctx.fillText('圖片暫時無法讀取', 172, 654);
-            }
-
-            // Title/info
-            ctx.fillStyle = '#1A2F4C';
-            ctx.font = 'bold 46px sans-serif';
-            const titleLines = canvasWrappedLines(ctx, normalized.name, 486).slice(0, 3);
-            titleLines.forEach((line, i) => ctx.fillText(line, 464, 304 + i * 56));
-            let y = 304 + titleLines.length * 56 + 12;
-            ctx.fillStyle = '#666666';
-            ctx.font = '25px sans-serif';
-            ctx.fillText(`${normalized.abv}% Vol ・ ${normalized.volume}ml ・ ${normalized.type || '高粱酒'}`, 464, y);
-            if (normalized.series) {
-                y += 36;
-                ctx.fillText(`系列：${normalized.series}`, 464, y);
-            }
-
-            // Divider
-            y += 22;
-            const divY = y + 10;
-            const lineGrad = ctx.createLinearGradient(464, 0, 900, 0);
-            lineGrad.addColorStop(0, '#C5A059');
-            lineGrad.addColorStop(1, 'rgba(197,160,89,0)');
-            ctx.strokeStyle = lineGrad;
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(464, divY);
-            ctx.lineTo(930, divY);
-            ctx.stroke();
-
-            // Flavor chips
-            y = divY + 34;
-            ctx.fillStyle = '#8B6E3B';
-            ctx.font = 'bold 22px sans-serif';
-            ctx.fillText('風味特色', 464, y);
-            let chipX = 464, chipY = y + 16;
-            const flavorTags = (normalized.tags?.flavor || []).slice(0, 4);
-            (flavorTags.length ? flavorTags : ['依酒款資料為準']).forEach((tag) => {
-                const w = drawChip(chipX, chipY, tag, 'flavor');
-                chipX += w + 10;
-                if (chipX > 880) {
-                    chipX = 464;
-                    chipY += 48;
-                }
-            });
-
-            // Taste chips
-            const tasteBaseY = chipY + 66;
-            ctx.fillStyle = '#8B6E3B';
-            ctx.font = 'bold 22px sans-serif';
-            ctx.fillText('口感體驗', 464, tasteBaseY);
-            chipX = 464; chipY = tasteBaseY + 16;
-            const tasteTags = (normalized.tags?.taste || []).slice(0, 4);
-            (tasteTags.length ? tasteTags : ['依酒款資料為準']).forEach((tag) => {
-                const w = drawChip(chipX, chipY, tag, 'taste');
-                chipX += w + 10;
-                if (chipX > 880) {
-                    chipX = 464;
-                    chipY += 48;
-                }
-            });
-
-            // Target & purpose boxes
-            const boxTop = 802;
-            const drawMiniBox = (x, title, text) => {
-                ctx.fillStyle = '#FBFAF7';
-                ctx.strokeStyle = '#ECE6D9';
-                ctx.lineWidth = 2;
-                roundRectPath(x, boxTop, 430, 118, 18);
-                ctx.fill();
-                ctx.stroke();
-                ctx.fillStyle = '#8B6E3B';
-                ctx.font = 'bold 20px sans-serif';
-                ctx.fillText(title, x + 22, boxTop + 34);
-                ctx.fillStyle = '#555555';
-                ctx.font = '22px sans-serif';
-                const lines = canvasWrappedLines(ctx, text || '', 384).slice(0, 2);
-                lines.forEach((line, i) => ctx.fillText(line, x + 22, boxTop + 76 + i * 28));
-            };
-            drawMiniBox(86, '推薦對象', ((normalized.tags?.target || []).slice(0, 3).join('・') || '依店家推薦為準'));
-            drawMiniBox(564, '適合場合', ((normalized.tags?.purpose || []).slice(0, 3).join('・') || '送禮、自飲皆宜'));
-
-            // Intro box
-            const introTop = 950;
-            ctx.fillStyle = '#FBFAF7';
-            ctx.strokeStyle = '#ECE6D9';
-            ctx.lineWidth = 2;
-            roundRectPath(86, introTop, 908, 250, 20);
-            ctx.fill();
-            ctx.stroke();
-            ctx.fillStyle = '#8B6E3B';
-            ctx.font = 'bold 24px sans-serif';
-            ctx.fillText('酒款簡介', 116, introTop + 42);
-            ctx.fillStyle = '#555555';
-            ctx.font = '24px sans-serif';
-            const intro = normalized.text?.shortIntro || normalized.text?.fullIntro || normalized.text?.reason || '歡迎加入官方 LINE，洽詢酒款特色、牌價與現貨。';
-            const introLines = canvasWrappedLines(ctx, intro, 834).slice(0, 5);
-            introLines.forEach((line, i) => ctx.fillText(line, 116, introTop + 92 + i * 36));
-
-            // QR boxes
-            const helperUrl = getWineShareUrl(normalized.id);
-            const lineUrl = OFFICIAL_LINE_URL;
-            const [helperQr, lineQr] = await Promise.all([
-                loadCanvasImage(getQrImageUrl(helperUrl)),
-                loadCanvasImage(getQrImageUrl(lineUrl))
-            ]);
-
-            const drawQrCard = (x, title, subtitle, qrImg) => {
-                ctx.fillStyle = '#FCFBF8';
-                ctx.strokeStyle = '#E2DFD8';
-                ctx.lineWidth = 2;
-                roundRectPath(x, 1244, 430, 320, 22);
-                ctx.fill();
-                ctx.stroke();
-                ctx.fillStyle = '#1A2F4C';
-                ctx.font = 'bold 28px sans-serif';
-                ctx.fillText(title, x + 28, 1290);
-                drawContainedImage(ctx, qrImg, x + 124, 1304, 182, 182);
-                ctx.fillStyle = '#707070';
-                ctx.font = '18px sans-serif';
-                const lines = canvasWrappedLines(ctx, subtitle, 360).slice(0, 3);
-                lines.forEach((line, i) => ctx.fillText(line, x + 34, 1510 + i * 24));
-            };
-            drawQrCard(86, '選酒小幫手', '掃描後可查看完整酒款介紹、分享酒款頁面與加入詢問清單。', helperQr);
-            drawQrCard(564, '官方 LINE', '掃描後可直接聯繫店家，詢問牌價、現貨與選酒建議。', lineQr);
-
-            ctx.fillStyle = '#7C7C7C';
-            ctx.font = '18px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText('本酒卡不含價格資訊；實際牌價、庫存與優惠請以門市或官方 LINE 回覆為準。', 540, 1616);
-            ctx.fillStyle = '#A63C30';
-            ctx.font = 'bold 20px sans-serif';
-            ctx.fillText('禁止酒駕｜未滿十八歲禁止飲酒', 540, 1650);
-            ctx.textAlign = 'left';
-
-            try {
-                return await new Promise(resolve => canvas.toBlob(resolve, 'image/png', 0.95));
-            } catch (e) {
-                console.error('精品酒卡圖片產生失敗：', e);
-                return null;
-            }
-        };
-
         const makeShareBlob = async ({ liquor = null, results = null }) => {
             const canvas = document.createElement('canvas');
             canvas.width = 1080;
@@ -1124,73 +894,103 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",sans-serif;back
 
             if (liquor) {
                 const normalized = normalizeLiquor(liquor);
-                const wineImg = await loadCanvasImage(normalized.image);
-                drawContainedImage(ctx, wineImg, 60, 215, 360, 500);
+                const helperUrl = getWineShareUrl(normalized.id);
+                const lineUrl = OFFICIAL_LINE_URL;
+                const [wineImg, helperQr, lineQr] = await Promise.all([
+                    loadCanvasImage(normalized.image),
+                    loadCanvasImage(getQrImageUrl(helperUrl)),
+                    loadCanvasImage(getQrImageUrl(lineUrl))
+                ]);
 
+                // 酒款主圖
+                drawContainedImage(ctx, wineImg, 60, 215, 340, 455);
+
+                // 基本資料
                 ctx.fillStyle = '#1A2F4C';
-                ctx.font = 'bold 48px sans-serif';
-                const titleLines = canvasWrappedLines(ctx, normalized.name, 540).slice(0, 3);
-                titleLines.forEach((line, i) => ctx.fillText(line, 465, 270 + i * 62));
-                let y = 270 + titleLines.length * 62 + 24;
-                ctx.font = '27px sans-serif';
+                ctx.font = 'bold 46px sans-serif';
+                const titleLines = canvasWrappedLines(ctx, normalized.name, 560).slice(0, 3);
+                titleLines.forEach((line, i) => ctx.fillText(line, 445, 270 + i * 58));
+                let y = 270 + titleLines.length * 58 + 18;
+
                 ctx.fillStyle = '#A63C30';
-                ctx.fillText(`${normalized.abv}% Vol · ${normalized.volume}ml`, 465, y);
-                y += 42;
+                ctx.font = '27px sans-serif';
+                ctx.fillText(`${normalized.abv}% Vol · ${normalized.volume}ml`, 445, y);
+                y += 40;
                 ctx.fillStyle = '#666';
-                ctx.font = '23px sans-serif';
-                ctx.fillText(normalized.type || '高粱酒', 465, y);
+                ctx.font = '22px sans-serif';
+                ctx.fillText(normalized.type || '高粱酒', 445, y);
                 if (normalized.series) {
-                    y += 34;
-                    ctx.fillText(`系列：${normalized.series}`, 465, y);
+                    y += 32;
+                    ctx.fillText(`系列：${normalized.series}`, 445, y);
                 }
-                y += 62;
-                ctx.fillStyle = '#1A2F4C';
-                ctx.font = 'bold 25px sans-serif';
-                ctx.fillText('風味', 465, y);
-                ctx.font = '24px sans-serif';
-                ctx.fillStyle = '#555';
-                const flavorLines = canvasWrappedLines(ctx, (normalized.tags?.flavor || []).join('・') || '依酒款資料為準', 410).slice(0, 2);
-                flavorLines.forEach((line, i) => ctx.fillText(line, 555, y + i * 34));
-                y += Math.max(50, flavorLines.length * 34 + 18);
-                ctx.fillStyle = '#1A2F4C';
-                ctx.font = 'bold 25px sans-serif';
-                ctx.fillText('口感', 465, y);
-                ctx.font = '24px sans-serif';
-                ctx.fillStyle = '#555';
-                const tasteLines = canvasWrappedLines(ctx, (normalized.tags?.taste || []).join('・') || '依酒款資料為準', 410).slice(0, 2);
-                tasteLines.forEach((line, i) => ctx.fillText(line, 555, y + i * 34));
 
-                const boxY = 760;
+                y += 54;
+                ctx.fillStyle = '#1A2F4C';
+                ctx.font = 'bold 24px sans-serif';
+                ctx.fillText('風味', 445, y);
+                ctx.fillStyle = '#555';
+                ctx.font = '23px sans-serif';
+                const flavorLines = canvasWrappedLines(ctx, (normalized.tags?.flavor || []).slice(0, 5).join('・') || '依酒款資料為準', 440).slice(0, 2);
+                flavorLines.forEach((line, i) => ctx.fillText(line, 525, y + i * 32));
+
+                y += Math.max(52, flavorLines.length * 32 + 18);
+                ctx.fillStyle = '#1A2F4C';
+                ctx.font = 'bold 24px sans-serif';
+                ctx.fillText('口感', 445, y);
+                ctx.fillStyle = '#555';
+                ctx.font = '23px sans-serif';
+                const tasteLines = canvasWrappedLines(ctx, (normalized.tags?.taste || []).slice(0, 5).join('・') || '依酒款資料為準', 440).slice(0, 2);
+                tasteLines.forEach((line, i) => ctx.fillText(line, 525, y + i * 32));
+
+                // 推薦重點
+                const boxY = 710;
                 ctx.fillStyle = '#FFFFFF';
                 ctx.strokeStyle = '#E2DFD8';
                 ctx.lineWidth = 2;
                 ctx.beginPath();
-                ctx.roundRect(60, boxY, 960, 340, 24);
+                ctx.roundRect(60, boxY, 960, 205, 24);
                 ctx.fill();
                 ctx.stroke();
                 ctx.fillStyle = '#1A2F4C';
-                ctx.font = 'bold 28px sans-serif';
-                ctx.fillText('推薦重點', 92, boxY + 58);
-                ctx.font = '26px sans-serif';
+                ctx.font = 'bold 27px sans-serif';
+                ctx.fillText('推薦重點', 92, boxY + 50);
+                ctx.font = '24px sans-serif';
                 ctx.fillStyle = '#555';
                 const intro = normalized.text?.reason || normalized.text?.shortIntro || '';
-                const introLines = canvasWrappedLines(ctx, intro, 850).slice(0, 6);
-                introLines.forEach((line, i) => ctx.fillText(line, 92, boxY + 112 + i * 41));
+                const introLines = canvasWrappedLines(ctx, intro, 850).slice(0, 4);
+                introLines.forEach((line, i) => ctx.fillText(line, 92, boxY + 98 + i * 34));
 
-                const url = getWineShareUrl(normalized.id);
-                ctx.fillStyle = '#1A2F4C';
-                ctx.font = '22px sans-serif';
-                ctx.fillText('點擊分享連結查看完整酒款資訊', 72, 1175);
-                ctx.fillStyle = '#777';
-                ctx.font = '18px sans-serif';
-                const shortUrl = url.length > 82 ? url.slice(0, 79) + '…' : url;
-                ctx.fillText(shortUrl, 72, 1215);
+                // 雙 QR：選酒小幫手 + LINE
+                const qrTop = 950;
+                const drawQrBlock = (x, title, subtitle, img) => {
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.strokeStyle = '#E2DFD8';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.roundRect(x, qrTop, 445, 285, 22);
+                    ctx.fill();
+                    ctx.stroke();
+
+                    ctx.fillStyle = '#1A2F4C';
+                    ctx.font = 'bold 25px sans-serif';
+                    ctx.fillText(title, x + 28, qrTop + 42);
+                    drawContainedImage(ctx, img, x + 118, qrTop + 58, 210, 170);
+
+                    ctx.fillStyle = '#666';
+                    ctx.font = '18px sans-serif';
+                    const lines = canvasWrappedLines(ctx, subtitle, 380).slice(0, 2);
+                    lines.forEach((line, i) => ctx.fillText(line, x + 30, qrTop + 252 + i * 24));
+                };
+
+                drawQrBlock(60, '選酒小幫手', '查看完整酒款介紹與加入詢問清單', helperQr);
+                drawQrBlock(575, '官方 LINE', '詢問即時牌價、現貨與選酒建議', lineQr);
+
                 if (!wineImg) {
                     ctx.fillStyle = '#A63C30';
-                    ctx.font = '18px sans-serif';
-                    ctx.fillText('※ 原圖來源未開放跨站讀取，分享卡暫以圖片預留區呈現', 72, 1252);
+                    ctx.font = '17px sans-serif';
+                    ctx.fillText('※ 這支酒的圖片目前仍無法載入分享圖，請檢查該圖片是否可公開讀取，或重新上傳一次圖片。', 72, 1265);
                 }
-            } else if (results) {
+            }            } else if (results) {
                 ctx.fillStyle = '#1A2F4C';
                 ctx.font = 'bold 42px sans-serif';
                 ctx.fillText('為你挑出的酒款', 72, 245);
@@ -1229,7 +1029,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",sans-serif;back
                 if (imgs.some(x => !x)) {
                     ctx.fillStyle = '#A63C30';
                     ctx.font = '18px sans-serif';
-                    ctx.fillText('※ 部分外部圖片來源可能限制分享卡載入，改用自有圖床後即可穩定顯示', 72, 1252);
+                    ctx.fillText('※ 若部分酒款圖片仍未顯示，請檢查該圖片是否可公開讀取，或重新上傳一次圖片', 72, 1252);
                 }
             }
 
@@ -2094,7 +1894,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",sans-serif;back
             };
 
             const handleShareResults = async () => {
-                setShareStatus('產生分享圖片中…');
+                setShareStatus('產生分享圖片中（含雙 QR）…');
                 const blob = await makeShareBlob({ results: { ...results, top3: visibleItems } });
                 await shareOrDownloadBlob(blob, '怡亨選酒推薦.png', { title: '我的怡亨選酒結果', text: '這是我用怡亨選酒小幫手找到的酒款' });
                 setShareStatus('分享圖片已準備完成');
@@ -2300,14 +2100,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",sans-serif;back
                 setTimeout(() => setShareStatus(''), 2200);
             };
 
-            const handleWineCardImage = async () => {
-                setShareStatus('產生精品酒卡中…');
-                const blob = await makeWineCardBlob(normalized);
-                await shareOrDownloadBlob(blob, `${normalized.name}-精品酒卡.png`, { title: normalized.name, text: '怡亨選酒小幫手精品酒卡', url: getWineShareUrl(normalized.id) });
-                setShareStatus('精品酒卡已準備完成');
-                setTimeout(() => setShareStatus(''), 2200);
-            };
-
             return (
                 <div className="max-w-2xl mx-auto bg-white min-h-screen pb-24 relative shadow-sm">
                     <button onClick={() => setView('catalog')} className="fixed top-20 left-4 z-20 w-10 h-10 bg-white/90 backdrop-blur rounded-full flex items-center justify-center shadow-md border border-gray-200 text-km-blue hover:bg-gray-100 transition-colors" title="回總覽"><svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg></button>
@@ -2324,8 +2116,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",sans-serif;back
                             <CompareButton liquor={normalized} isCompared={compareIds.includes(normalized.id)} onToggle={onToggleCompare} size="normal" />
                             <button type="button" onClick={handleShareLink} className="px-4 py-2.5 rounded-full border border-km-gold text-km-blue font-bold text-sm bg-white">分享連結</button>
                             <button type="button" onClick={handleShareImage} className="px-4 py-2.5 rounded-full border border-km-gold bg-km-gold text-white font-bold text-sm">產生分享圖片</button>
-                            <button type="button" onClick={() => openPrintableQrCard(normalized)} className="px-4 py-2.5 rounded-full border border-emerald-600 text-emerald-700 font-bold text-sm bg-white">QR 酒卡</button>
-                            <button type="button" onClick={handleWineCardImage} className="px-4 py-2.5 rounded-full border border-[#06C755] bg-[#06C755] text-white font-bold text-sm">產生精品酒卡</button>
                         </div>
                         {shareStatus && <div className="mb-4 text-xs font-bold text-km-blue">{shareStatus}</div>}
 
@@ -3573,8 +3363,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",sans-serif;back
                                                         {isEditingThisRow ? '編輯中' : '編輯'}
                                                     </button>
                                                     <button onClick={() => handleDuplicate(liquor)} className="text-km-gold hover:text-km-blue mr-3 text-sm font-bold">複製</button>
-                                                    <button onClick={() => openPrintableQrCard(liquor)} className="text-emerald-700 hover:text-emerald-900 mr-3 text-sm font-bold">QR酒卡</button>
-                                                    <button onClick={async () => { const blob = await makeWineCardBlob(liquor); await shareOrDownloadBlob(blob, `${liquor.name}-精品酒卡.png`, { title: liquor.name, text: "怡亨選酒小幫手精品酒卡", url: getWineShareUrl(liquor.id) }); }} className="text-[#06C755] hover:text-[#048c3d] mr-3 text-sm font-bold">精品酒卡圖</button>
                                                     <button onClick={() => setConfirmDeleteId(liquor.id)} className="text-red-500 hover:text-red-700 text-sm font-medium">刪除</button>
                                                 </td>
                                             </tr>
@@ -3751,7 +3539,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",sans-serif;back
 
             // Logo 更新時同步 favicon / Apple touch icon。
             React.useEffect(() => {
-                window.__currentSiteLogoUrl = logoUrl;
                 document.querySelectorAll('link[rel="icon"], link[rel="apple-touch-icon"]').forEach((link) => {
                     link.href = logoUrl;
                 });
