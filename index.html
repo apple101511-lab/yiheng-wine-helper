@@ -64,8 +64,7 @@
             ref as storageRef,
             uploadBytesResumable,
             getDownloadURL,
-            deleteObject,
-            getBlob
+            deleteObject
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
 
         // Firebase Web App 設定
@@ -203,38 +202,6 @@
 
             isAdmin: () => {
                 return !!currentUser && currentUser.uid === ADMIN_UID;
-            },
-
-            getFirebaseImageObjectUrl: async (sourceUrl = "") => {
-                try {
-                    const storagePath = getOwnStoragePathFromUrl(sourceUrl);
-                    if (!storagePath) {
-                        return {
-                            success: false,
-                            url: sourceUrl,
-                            cleanup: null,
-                            source: "external"
-                        };
-                    }
-
-                    const blob = await getBlob(storageRef(storage, storagePath));
-                    const objectUrl = URL.createObjectURL(blob);
-                    return {
-                        success: true,
-                        url: objectUrl,
-                        cleanup: () => URL.revokeObjectURL(objectUrl),
-                        source: "firebase"
-                    };
-                } catch (error) {
-                    console.warn("Firebase Storage 圖片讀取失敗，將退回原始網址：", error);
-                    return {
-                        success: false,
-                        url: sourceUrl,
-                        cleanup: null,
-                        source: "firebase",
-                        error: error?.message || "圖片讀取失敗"
-                    };
-                }
             },
 
             uploadWineImage: async (file, wineId, previousImageUrl = "", onProgress = null) => {
@@ -675,6 +642,7 @@
             .replace(/'/g, "&#039;");
 
         const getQrImageUrl = (url) => `https://quickchart.io/qr?text=${encodeURIComponent(url)}&size=420&margin=1&dark=1A2F4C&light=FFFFFF`;
+
         const OFFICIAL_LINE_URL = "https://lin.ee/9O8E0wy";
 
         const getDerivedAttributes = (liquor = {}) => {
@@ -794,57 +762,72 @@
             return lines;
         };
 
-        const loadCanvasImage = async (src, timeoutMs = 12000) => {
+        const blobToDataUrl = (blob) => new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(reader.error || new Error('Blob 轉 Data URL 失敗'));
+            reader.readAsDataURL(blob);
+        });
+
+        const loadImageElement = (src, timeoutMs = 12000, useCors = false) => new Promise(resolve => {
+            if (!src) return resolve(null);
+            const img = new Image();
+            let done = false;
+            const finish = (value) => {
+                if (done) return;
+                done = true;
+                clearTimeout(timer);
+                resolve(value);
+            };
+            const timer = setTimeout(() => finish(null), timeoutMs);
+
+            if (useCors) {
+                img.crossOrigin = 'anonymous';
+                img.referrerPolicy = 'no-referrer';
+            }
+
+            img.onload = () => finish(img);
+            img.onerror = () => finish(null);
+            img.src = src;
+        });
+
+        const loadCanvasImage = async (src, timeoutMs = 15000) => {
             if (!src) return null;
 
-            let finalSrc = src;
-            let cleanupObjectUrl = null;
-            const cloud = window.__cloudStorage;
+            const isFirebaseStorage =
+                typeof src === 'string' &&
+                src.includes('firebasestorage.googleapis.com');
 
-            // 如果圖片在 Firebase Storage，優先透過 Storage SDK 取回 Blob，再轉成 object URL 給 Canvas 使用。
-            // 這樣比直接把 firebasestorage URL 丟給 <img> 更穩定，能避開部分分享圖跨來源讀取問題。
-            if (cloud?.getFirebaseImageObjectUrl && typeof src === 'string' && src.includes('firebasestorage.googleapis.com')) {
+            if (isFirebaseStorage) {
                 try {
-                    const result = await cloud.getFirebaseImageObjectUrl(src);
-                    if (result?.success && result.url) {
-                        finalSrc = result.url;
-                        cleanupObjectUrl = typeof result.cleanup === 'function' ? result.cleanup : null;
+                    const response = await fetch(src, {
+                        method: 'GET',
+                        mode: 'cors',
+                        credentials: 'omit',
+                        cache: 'no-store'
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}`);
                     }
+
+                    const blob = await response.blob();
+                    if (!blob || !String(blob.type || '').startsWith('image/')) {
+                        throw new Error(`回傳格式不是圖片：${blob?.type || 'unknown'}`);
+                    }
+
+                    const dataUrl = await blobToDataUrl(blob);
+                    const img = await loadImageElement(dataUrl, timeoutMs, false);
+                    if (img) return img;
                 } catch (error) {
-                    console.warn('Firebase Storage 轉 object URL 失敗，改用原始網址：', error);
+                    console.warn('Firebase Storage 酒圖無法轉入分享圖片：', error);
                 }
             }
 
-            return await new Promise(resolve => {
-                const img = new Image();
-                let done = false;
-
-                const finish = (value) => {
-                    if (!done) {
-                        done = true;
-                        clearTimeout(timer);
-                        if (cleanupObjectUrl) {
-                            try { cleanupObjectUrl(); } catch (e) {}
-                            cleanupObjectUrl = null;
-                        }
-                        resolve(value);
-                    }
-                };
-
-                const timer = setTimeout(() => finish(null), timeoutMs);
-
-                if (finalSrc === src) {
-                    img.crossOrigin = 'anonymous';
-                    img.referrerPolicy = 'no-referrer';
-                }
-
-                img.onload = () => finish(img);
-                img.onerror = () => {
-                    console.warn('分享圖片無法讀取此圖片來源：', src);
-                    finish(null);
-                };
-                img.src = finalSrc;
-            });
+            // QR Code 或其他來源的備援載入方式
+            const fallback = await loadImageElement(src, timeoutMs, true);
+            if (!fallback) console.warn('分享圖片無法載入圖片：', src);
+            return fallback;
         };
 
         const drawContainedImage = (ctx, img, x, y, w, h) => {
@@ -881,13 +864,17 @@
             canvas.width = 1080;
             canvas.height = 1350;
             const ctx = canvas.getContext('2d');
+
             ctx.fillStyle = '#F9F6F0';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
+
             ctx.fillStyle = '#1A2F4C';
             ctx.fillRect(0, 0, canvas.width, 170);
+
             ctx.fillStyle = '#E8D5A5';
             ctx.font = 'bold 42px sans-serif';
             ctx.fillText('怡亨選酒小幫手', 72, 92);
+
             ctx.fillStyle = '#FFFFFF';
             ctx.font = '24px sans-serif';
             ctx.fillText(liquor ? '酒款分享卡' : '我的選酒結果', 72, 132);
@@ -895,30 +882,33 @@
             if (liquor) {
                 const normalized = normalizeLiquor(liquor);
                 const helperUrl = getWineShareUrl(normalized.id);
-                const lineUrl = OFFICIAL_LINE_URL;
+
                 const [wineImg, helperQr, lineQr] = await Promise.all([
                     loadCanvasImage(normalized.image),
                     loadCanvasImage(getQrImageUrl(helperUrl)),
-                    loadCanvasImage(getQrImageUrl(lineUrl))
+                    loadCanvasImage(getQrImageUrl(OFFICIAL_LINE_URL))
                 ]);
 
-                // 酒款主圖
+                // 酒款圖片
                 drawContainedImage(ctx, wineImg, 60, 215, 340, 455);
 
-                // 基本資料
+                // 酒款基本資料
                 ctx.fillStyle = '#1A2F4C';
                 ctx.font = 'bold 46px sans-serif';
                 const titleLines = canvasWrappedLines(ctx, normalized.name, 560).slice(0, 3);
                 titleLines.forEach((line, i) => ctx.fillText(line, 445, 270 + i * 58));
+
                 let y = 270 + titleLines.length * 58 + 18;
 
                 ctx.fillStyle = '#A63C30';
                 ctx.font = '27px sans-serif';
                 ctx.fillText(`${normalized.abv}% Vol · ${normalized.volume}ml`, 445, y);
+
                 y += 40;
                 ctx.fillStyle = '#666';
                 ctx.font = '22px sans-serif';
                 ctx.fillText(normalized.type || '高粱酒', 445, y);
+
                 if (normalized.series) {
                     y += 32;
                     ctx.fillText(`系列：${normalized.series}`, 445, y);
@@ -928,18 +918,28 @@
                 ctx.fillStyle = '#1A2F4C';
                 ctx.font = 'bold 24px sans-serif';
                 ctx.fillText('風味', 445, y);
+
                 ctx.fillStyle = '#555';
                 ctx.font = '23px sans-serif';
-                const flavorLines = canvasWrappedLines(ctx, (normalized.tags?.flavor || []).slice(0, 5).join('・') || '依酒款資料為準', 440).slice(0, 2);
+                const flavorLines = canvasWrappedLines(
+                    ctx,
+                    (normalized.tags?.flavor || []).slice(0, 5).join('・') || '依酒款資料為準',
+                    440
+                ).slice(0, 2);
                 flavorLines.forEach((line, i) => ctx.fillText(line, 525, y + i * 32));
 
                 y += Math.max(52, flavorLines.length * 32 + 18);
                 ctx.fillStyle = '#1A2F4C';
                 ctx.font = 'bold 24px sans-serif';
                 ctx.fillText('口感', 445, y);
+
                 ctx.fillStyle = '#555';
                 ctx.font = '23px sans-serif';
-                const tasteLines = canvasWrappedLines(ctx, (normalized.tags?.taste || []).slice(0, 5).join('・') || '依酒款資料為準', 440).slice(0, 2);
+                const tasteLines = canvasWrappedLines(
+                    ctx,
+                    (normalized.tags?.taste || []).slice(0, 5).join('・') || '依酒款資料為準',
+                    440
+                ).slice(0, 2);
                 tasteLines.forEach((line, i) => ctx.fillText(line, 525, y + i * 32));
 
                 // 推薦重點
@@ -951,16 +951,18 @@
                 ctx.roundRect(60, boxY, 960, 205, 24);
                 ctx.fill();
                 ctx.stroke();
+
                 ctx.fillStyle = '#1A2F4C';
                 ctx.font = 'bold 27px sans-serif';
                 ctx.fillText('推薦重點', 92, boxY + 50);
-                ctx.font = '24px sans-serif';
+
                 ctx.fillStyle = '#555';
+                ctx.font = '24px sans-serif';
                 const intro = normalized.text?.reason || normalized.text?.shortIntro || '';
                 const introLines = canvasWrappedLines(ctx, intro, 850).slice(0, 4);
                 introLines.forEach((line, i) => ctx.fillText(line, 92, boxY + 98 + i * 34));
 
-                // 雙 QR：選酒小幫手 + LINE
+                // 雙 QR
                 const qrTop = 950;
                 const drawQrBlock = (x, title, subtitle, img) => {
                     ctx.fillStyle = '#FFFFFF';
@@ -974,6 +976,7 @@
                     ctx.fillStyle = '#1A2F4C';
                     ctx.font = 'bold 25px sans-serif';
                     ctx.fillText(title, x + 28, qrTop + 42);
+
                     drawContainedImage(ctx, img, x + 118, qrTop + 58, 210, 170);
 
                     ctx.fillStyle = '#666';
@@ -988,16 +991,19 @@
                 if (!wineImg) {
                     ctx.fillStyle = '#A63C30';
                     ctx.font = '17px sans-serif';
-                    ctx.fillText('※ 這支酒的圖片目前仍無法載入分享圖，請檢查該圖片是否可公開讀取，或重新上傳一次圖片。', 72, 1265);
+                    ctx.fillText('※ 酒款圖片無法載入，請確認 Firebase Storage CORS 設定。', 72, 1265);
                 }
-            }            } else if (results) {
+            } else if (results) {
                 ctx.fillStyle = '#1A2F4C';
                 ctx.font = 'bold 42px sans-serif';
                 ctx.fillText('為你挑出的酒款', 72, 245);
+
                 const items = (results.top3 || []).slice(0, 3).map(normalizeLiquor);
                 const imgs = await Promise.all(items.map(item => loadCanvasImage(item.image)));
+
                 items.forEach((item, idx) => {
                     const top = 300 + idx * 275;
+
                     ctx.fillStyle = '#FFFFFF';
                     ctx.strokeStyle = '#E2DFD8';
                     ctx.lineWidth = 2;
@@ -1005,32 +1011,38 @@
                     ctx.roundRect(60, top, 960, 235, 22);
                     ctx.fill();
                     ctx.stroke();
+
                     drawContainedImage(ctx, imgs[idx], 82, top + 22, 170, 190);
+
                     ctx.fillStyle = '#C5A059';
                     ctx.font = 'bold 30px sans-serif';
                     ctx.fillText(String(idx + 1).padStart(2, '0'), 278, top + 50);
+
                     ctx.fillStyle = '#1A2F4C';
                     ctx.font = 'bold 30px sans-serif';
                     const nameLines = canvasWrappedLines(ctx, item.name, 660).slice(0, 2);
                     nameLines.forEach((line, i) => ctx.fillText(line, 335, top + 52 + i * 39));
+
                     ctx.font = '22px sans-serif';
                     ctx.fillStyle = '#666';
                     ctx.fillText(`${item.abv}% Vol · ${item.volume}ml · ${item.type}`, 335, top + 142);
+
                     const reason = (item.matchReasons || []).slice(0, 3).join('、');
-                    const reasonLines = canvasWrappedLines(ctx, reason ? `符合：${reason}` : '依你的需求綜合推薦', 640).slice(0, 2);
+                    const reasonLines = canvasWrappedLines(
+                        ctx,
+                        reason ? `符合：${reason}` : '依你的需求綜合推薦',
+                        640
+                    ).slice(0, 2);
                     reasonLines.forEach((line, i) => ctx.fillText(line, 335, top + 180 + i * 30));
                 });
+
                 ctx.fillStyle = '#1A2F4C';
                 ctx.font = '22px sans-serif';
                 ctx.fillText('完整資訊請至怡亨選酒小幫手查看', 72, 1175);
+
                 ctx.fillStyle = '#777';
                 ctx.font = '18px sans-serif';
                 ctx.fillText(getBaseSiteUrl(), 72, 1215);
-                if (imgs.some(x => !x)) {
-                    ctx.fillStyle = '#A63C30';
-                    ctx.font = '18px sans-serif';
-                    ctx.fillText('※ 若部分酒款圖片仍未顯示，請檢查該圖片是否可公開讀取，或重新上傳一次圖片', 72, 1252);
-                }
             }
 
             ctx.fillStyle = '#A63C30';
@@ -1894,7 +1906,7 @@
             };
 
             const handleShareResults = async () => {
-                setShareStatus('產生分享圖片中（含雙 QR）…');
+                setShareStatus('產生分享圖片中…');
                 const blob = await makeShareBlob({ results: { ...results, top3: visibleItems } });
                 await shareOrDownloadBlob(blob, '怡亨選酒推薦.png', { title: '我的怡亨選酒結果', text: '這是我用怡亨選酒小幫手找到的酒款' });
                 setShareStatus('分享圖片已準備完成');
@@ -2093,11 +2105,25 @@
             };
 
             const handleShareImage = async () => {
-                setShareStatus('產生分享圖片中…');
-                const blob = await makeShareBlob({ liquor: normalized });
-                await shareOrDownloadBlob(blob, `${normalized.name}-分享卡.png`, { title: normalized.name, text: '怡亨選酒小幫手酒款分享卡', url: getWineShareUrl(normalized.id) });
-                setShareStatus('分享圖片已準備完成');
-                setTimeout(() => setShareStatus(''), 2200);
+                try {
+                    setShareStatus('產生分享圖片中…');
+                    const blob = await makeShareBlob({ liquor: normalized });
+                    if (!blob) {
+                        setShareStatus('分享圖片產生失敗，請重新整理後再試一次');
+                        setTimeout(() => setShareStatus(''), 3200);
+                        return;
+                    }
+                    await shareOrDownloadBlob(blob, `${normalized.name}-分享卡.png`, {
+                        title: normalized.name,
+                        text: '怡亨選酒小幫手酒款分享卡',
+                        url: getWineShareUrl(normalized.id)
+                    });
+                    setShareStatus('分享圖片已準備完成');
+                } catch (error) {
+                    console.error('產生分享圖片失敗：', error);
+                    setShareStatus('分享圖片產生失敗，請確認圖片讀取權限');
+                }
+                setTimeout(() => setShareStatus(''), 3200);
             };
 
             return (
