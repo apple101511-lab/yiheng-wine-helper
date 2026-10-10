@@ -43,7 +43,7 @@
     <!-- 載入 Babel 以解析 JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- Firebase 雲端資料同步服務（Firestore / Authentication） -->
+    <!-- Firebase 雲端資料同步服務 -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import {
@@ -58,6 +58,13 @@
             setDoc,
             onSnapshot
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import {
+            getStorage,
+            ref as storageRef,
+            uploadBytesResumable,
+            getDownloadURL,
+            deleteObject
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
 
         // Firebase Web App 設定
         const firebaseConfig = {
@@ -77,6 +84,7 @@
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
+        const storage = getStorage(app);
         let currentUser = auth.currentUser;
 
         const MAX_IMAGE_UPLOAD_BYTES = 12 * 1024 * 1024;
@@ -84,7 +92,7 @@
         const IMAGE_WEBP_QUALITY = 0.9;
         const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
-        const sanitizeImageFileName = (value) => String(value || "wine")
+        const sanitizeStorageSegment = (value) => String(value || "wine")
             .trim()
             .replace(/[^a-zA-Z0-9_-]/g, "-")
             .replace(/-+/g, "-")
@@ -140,33 +148,17 @@
             };
         };
 
-        // 酒款圖片本機處理工具：不使用 Firebase Storage。
-        // 圖片會在瀏覽器端轉成 WebP，並建議放到 GitHub Pages 的 images/wines/。
-        window.__wineImageTools = {
-            prepareWineImage: async (file, wineId) => {
-                try {
-                    const optimized = await optimizeWineImage(file);
-                    const safeWineId = sanitizeImageFileName(wineId);
-                    const filename = `${safeWineId}.webp`;
-                    const relativePath = `images/wines/${filename}`;
-
-                    return {
-                        success: true,
-                        blob: optimized.blob,
-                        filename,
-                        relativePath,
-                        width: optimized.width,
-                        height: optimized.height,
-                        originalBytes: optimized.originalBytes,
-                        optimizedBytes: optimized.optimizedBytes
-                    };
-                } catch (error) {
-                    console.error("酒款圖片處理失敗：", error);
-                    return {
-                        success: false,
-                        error: error?.message || "圖片處理失敗"
-                    };
-                }
+        const getOwnStoragePathFromUrl = (url) => {
+            try {
+                if (!url) return null;
+                const parsed = new URL(url);
+                if (parsed.hostname !== "firebasestorage.googleapis.com") return null;
+                const bucketMarker = `/v0/b/${firebaseConfig.storageBucket}/o/`;
+                if (!parsed.pathname.startsWith(bucketMarker)) return null;
+                const encodedPath = parsed.pathname.slice(bucketMarker.length);
+                return decodeURIComponent(encodedPath);
+            } catch (e) {
+                return null;
             }
         };
 
@@ -209,6 +201,71 @@
 
             isAdmin: () => {
                 return !!currentUser && currentUser.uid === ADMIN_UID;
+            },
+
+            uploadWineImage: async (file, wineId, previousImageUrl = "", onProgress = null) => {
+                if (!currentUser || currentUser.uid !== ADMIN_UID) {
+                    return { success: false, error: "請先以管理員帳號登入後再上傳圖片。" };
+                }
+
+                try {
+                    const optimized = await optimizeWineImage(file);
+                    const safeWineId = sanitizeStorageSegment(wineId);
+                    const storagePath = `wines/${safeWineId}/main-${Date.now()}.webp`;
+                    const imageRef = storageRef(storage, storagePath);
+                    const metadata = {
+                        contentType: "image/webp",
+                        cacheControl: "public,max-age=31536000,immutable",
+                        customMetadata: {
+                            wineId: String(wineId || ""),
+                            uploadedBy: currentUser.uid
+                        }
+                    };
+
+                    const uploadTask = uploadBytesResumable(imageRef, optimized.blob, metadata);
+                    const snapshot = await new Promise((resolve, reject) => {
+                        uploadTask.on(
+                            "state_changed",
+                            (snap) => {
+                                const progress = snap.totalBytes ? Math.round((snap.bytesTransferred / snap.totalBytes) * 100) : 0;
+                                if (typeof onProgress === "function") onProgress(progress);
+                            },
+                            reject,
+                            () => resolve(uploadTask.snapshot)
+                        );
+                    });
+
+                    const url = await getDownloadURL(snapshot.ref);
+                    const oldPath = getOwnStoragePathFromUrl(previousImageUrl);
+                    if (oldPath && oldPath !== storagePath) {
+                        try {
+                            await deleteObject(storageRef(storage, oldPath));
+                        } catch (cleanupError) {
+                            console.warn("舊圖片清理失敗，不影響新圖片使用：", cleanupError);
+                        }
+                    }
+
+                    return {
+                        success: true,
+                        url,
+                        storagePath,
+                        width: optimized.width,
+                        height: optimized.height,
+                        originalBytes: optimized.originalBytes,
+                        optimizedBytes: optimized.optimizedBytes
+                    };
+                } catch (error) {
+                    console.error("Firebase Storage 圖片上傳失敗：", error);
+                    let message = error?.message || "圖片上傳失敗";
+                    if (error?.code === "storage/unauthorized") {
+                        message = "Firebase Storage 拒絕上傳。請確認 Storage 已啟用，並套用管理員寫入規則。";
+                    } else if (error?.code === "storage/bucket-not-found") {
+                        message = "找不到 Firebase Storage bucket，請先在 Firebase Console 啟用 Storage。";
+                    } else if (error?.code === "storage/quota-exceeded") {
+                        message = "Firebase Storage 配額不足，請到 Firebase Console 查看用量。";
+                    }
+                    return { success: false, code: error?.code || "", error: message };
+                }
             },
 
             saveLiquors: async (liquorsList) => {
@@ -1969,16 +2026,8 @@ h1{font-size:24px;line-height:1.35;margin:16px 0 8px}.meta{font-size:14px;color:
             const [batchTagCategory, setBatchTagCategory] = React.useState('purpose');
             const [batchTagValue, setBatchTagValue] = React.useState(PRESET_PURPOSES[0]);
             const [syncSeriesOnSave, setSyncSeriesOnSave] = React.useState(false);
-            const [imageProcessState, setImageProcessState] = React.useState({ status: 'idle', progress: 0, message: '' });
-            const [localImagePreview, setLocalImagePreview] = React.useState('');
-            const [preparedImage, setPreparedImage] = React.useState(null);
+            const [imageUploadState, setImageUploadState] = React.useState({ status: 'idle', progress: 0, message: '' });
             const imageFileInputRef = React.useRef(null);
-
-            React.useEffect(() => {
-                return () => {
-                    if (localImagePreview) URL.revokeObjectURL(localImagePreview);
-                };
-            }, [localImagePreview]);
 
             React.useEffect(() => {
                 const presets = BATCH_TAG_PRESETS[batchTagCategory] || [];
@@ -2067,9 +2116,7 @@ h1{font-size:24px;line-height:1.35;margin:16px 0 8px}.meta{font-size:14px;color:
                 cloned.publicationStatus = getPublicationStatus(cloned);
                 setEditForm(cloned);
                 setSyncSeriesOnSave(false);
-                setImageProcessState({ status: 'idle', progress: 0, message: '' });
-                setPreparedImage(null);
-                setLocalImagePreview('');
+                setImageUploadState({ status: 'idle', progress: 0, message: '' });
                 setIsAdding(false);
             };
 
@@ -2083,7 +2130,7 @@ h1{font-size:24px;line-height:1.35;margin:16px 0 8px}.meta{font-size:14px;color:
                     abv: 58,
                     volume: 600,
                     age: "無",
-                    image: "",
+                    image: `https://placehold.co/300x400/F9F6F0/1A2F4C?text=New\nItem`,
                     stock: true,
                     stockStatus: "現貨",
                     publicationStatus: "草稿",
@@ -2110,22 +2157,8 @@ h1{font-size:24px;line-height:1.35;margin:16px 0 8px}.meta{font-size:14px;color:
                     }
                 });
                 setSyncSeriesOnSave(false);
-                setImageProcessState({ status: 'idle', progress: 0, message: '' });
-                setPreparedImage(null);
-                setLocalImagePreview('');
+                setImageUploadState({ status: 'idle', progress: 0, message: '' });
                 setIsAdding(true);
-            };
-
-            const downloadPreparedImage = (payload = preparedImage) => {
-                if (!payload?.blob || !payload?.filename) return;
-                const downloadUrl = URL.createObjectURL(payload.blob);
-                const link = document.createElement('a');
-                link.href = downloadUrl;
-                link.download = payload.filename;
-                document.body.appendChild(link);
-                link.click();
-                link.remove();
-                setTimeout(() => URL.revokeObjectURL(downloadUrl), 1500);
             };
 
             const handleImageFileSelected = async (event) => {
@@ -2133,34 +2166,32 @@ h1{font-size:24px;line-height:1.35;margin:16px 0 8px}.meta{font-size:14px;color:
                 event.target.value = '';
                 if (!file || !editForm) return;
 
-                const processor = window.__wineImageTools?.prepareWineImage;
-                if (typeof processor !== 'function') {
-                    setImageProcessState({ status: 'error', progress: 0, message: '圖片處理工具尚未就緒，請重新整理頁面後再試。' });
+                const uploader = window.__cloudStorage?.uploadWineImage;
+                if (typeof uploader !== 'function') {
+                    setImageUploadState({ status: 'error', progress: 0, message: '圖片上傳功能尚未就緒，請重新整理頁面後再試。' });
                     return;
                 }
 
-                setImageProcessState({ status: 'processing', progress: 35, message: '正在縮圖並轉成 WebP…' });
-                const result = await processor(file, editForm.id);
+                setImageUploadState({ status: 'uploading', progress: 0, message: '正在壓縮並上傳圖片…' });
+                const result = await uploader(
+                    file,
+                    editForm.id,
+                    editForm.image || '',
+                    (progress) => setImageUploadState({ status: 'uploading', progress, message: `正在上傳… ${progress}%` })
+                );
 
                 if (!result?.success) {
-                    setImageProcessState({ status: 'error', progress: 0, message: result?.error || '圖片處理失敗。' });
+                    setImageUploadState({ status: 'error', progress: 0, message: result?.error || '圖片上傳失敗。' });
                     return;
                 }
 
-                const previewUrl = URL.createObjectURL(result.blob);
-                setLocalImagePreview(previewUrl);
-                setPreparedImage(result);
-                setEditForm(current => current ? { ...current, image: result.relativePath } : current);
-
-                // 直接把處理後圖片下載到電腦，之後上傳到 GitHub /images/wines/
-                downloadPreparedImage(result);
-
+                setEditForm(current => current ? { ...current, image: result.url } : current);
                 const originalKB = Math.max(1, Math.round((result.originalBytes || 0) / 1024));
                 const optimizedKB = Math.max(1, Math.round((result.optimizedBytes || 0) / 1024));
-                setImageProcessState({
+                setImageUploadState({
                     status: 'success',
                     progress: 100,
-                    message: `已產生 ${result.filename}（${result.width}×${result.height}px，約 ${originalKB}KB → ${optimizedKB}KB）。圖片路徑已設定為 ${result.relativePath}。請把下載的檔案上傳到 GitHub 的 images/wines/，再按「儲存商品」。`
+                    message: `圖片已上傳並套用（${result.width}×${result.height}px，約 ${originalKB}KB → ${optimizedKB}KB）。請再按「儲存商品」寫入酒款資料。`
                 });
             };
 
@@ -2505,8 +2536,8 @@ h1{font-size:24px;line-height:1.35;margin:16px 0 8px}.meta{font-size:14px;color:
                                     <label className="block text-sm font-medium text-gray-700 mb-2">商品圖片</label>
                                     <div className="grid grid-cols-1 md:grid-cols-[160px_1fr] gap-4 bg-white border rounded-xl p-4">
                                         <div className="aspect-square rounded-xl overflow-hidden bg-gray-100 border flex items-center justify-center">
-                                            {(localImagePreview || editForm.image) ? (
-                                                <img src={localImagePreview || editForm.image} alt={editForm.name || '酒款圖片預覽'} className="w-full h-full object-contain" />
+                                            {editForm.image ? (
+                                                <img src={editForm.image} alt={editForm.name || '酒款圖片預覽'} className="w-full h-full object-contain" />
                                             ) : (
                                                 <div className="text-xs text-gray-400 text-center px-3">尚未設定圖片</div>
                                             )}
@@ -2523,65 +2554,39 @@ h1{font-size:24px;line-height:1.35;margin:16px 0 8px}.meta{font-size:14px;color:
                                                 <button
                                                     type="button"
                                                     onClick={() => imageFileInputRef.current?.click()}
-                                                    disabled={imageProcessState.status === 'processing'}
-                                                    className={`px-4 py-2.5 rounded-lg text-sm font-bold transition ${imageProcessState.status === 'processing' ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-km-blue text-white hover:bg-opacity-90'}`}
+                                                    disabled={imageUploadState.status === 'uploading'}
+                                                    className={`px-4 py-2.5 rounded-lg text-sm font-bold transition ${imageUploadState.status === 'uploading' ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-km-blue text-white hover:bg-opacity-90'}`}
                                                 >
-                                                    {imageProcessState.status === 'processing' ? '圖片處理中…' : '🖼 選擇圖片並產生 WebP'}
+                                                    {imageUploadState.status === 'uploading' ? '圖片上傳中…' : '⬆ 選擇圖片並上傳'}
                                                 </button>
                                                 <span className="text-xs text-gray-500">支援 JPG / PNG / WebP，單檔 12MB 以下</span>
-                                                {editForm.image && (
-                                                    <span className={`text-[11px] px-2 py-1 rounded-full font-bold ${
-                                                        editForm.image.startsWith('images/wines/')
-                                                            ? 'bg-emerald-100 text-emerald-700'
-                                                            : /^https?:\/\//.test(editForm.image)
-                                                                ? 'bg-amber-100 text-amber-700'
-                                                                : 'bg-gray-100 text-gray-600'
-                                                    }`}>
-                                                        {editForm.image.startsWith('images/wines/')
-                                                            ? '✓ GitHub 圖片路徑'
-                                                            : /^https?:\/\//.test(editForm.image)
-                                                                ? '⚠ 外部圖片網址'
-                                                                : '圖片路徑已設定'}
-                                                    </span>
-                                                )}
                                             </div>
 
-                                            {imageProcessState.status === 'processing' && (
+                                            {imageUploadState.status === 'uploading' && (
                                                 <div>
                                                     <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                                                        <div className="h-full bg-km-gold transition-all" style={{ width: `${Math.max(2, imageProcessState.progress || 0)}%` }}></div>
+                                                        <div className="h-full bg-km-gold transition-all" style={{ width: `${Math.max(2, imageUploadState.progress || 0)}%` }}></div>
                                                     </div>
-                                                    <p className="text-xs text-gray-500 mt-1">{imageProcessState.message}</p>
+                                                    <p className="text-xs text-gray-500 mt-1">{imageUploadState.message}</p>
                                                 </div>
                                             )}
-                                            {imageProcessState.status === 'success' && <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg p-2.5">✓ {imageProcessState.message}</p>}
-                                            {imageProcessState.status === 'error' && <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-2.5">⚠ {imageProcessState.message}</p>}
+                                            {imageUploadState.status === 'success' && <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg p-2.5">✓ {imageUploadState.message}</p>}
+                                            {imageUploadState.status === 'error' && <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-2.5">⚠ {imageUploadState.message}</p>}
 
-                                            <div className="text-[11px] text-gray-500 leading-relaxed bg-amber-50 border border-amber-200 rounded-lg p-3">
-                                                <p>圖片會在瀏覽器端自動縮到長邊最多 1600px、轉成 WebP，並命名為 <code className="bg-white px-1 rounded">{editForm.id}.webp</code>。</p>
-                                                <p className="mt-1">處理完成後會自動下載到你的電腦，並把酒款圖片路徑設成 <code className="bg-white px-1 rounded">images/wines/{editForm.id}.webp</code>。接著只要把該檔案上傳到 GitHub 專案的 <code className="bg-white px-1 rounded">images/wines/</code> 資料夾即可，不需要 Firebase Storage。</p>
-                                            </div>
-
-                                            {preparedImage && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => downloadPreparedImage()}
-                                                    className="px-3 py-2 rounded-lg border border-km-blue text-km-blue text-xs font-bold hover:bg-blue-50"
-                                                >
-                                                    ↓ 再次下載 {preparedImage.filename}
-                                                </button>
-                                            )}
+                                            <p className="text-[11px] text-gray-500 leading-relaxed">
+                                                上傳時會在瀏覽器端自動縮到長邊最多 1600px 並轉成 WebP，再存到 Firebase Storage 的 <code className="bg-gray-100 px-1 rounded">wines/{editForm.id}/</code>。上傳成功後會自動取得圖片網址；不同容量仍會各自使用自己的酒款 ID 與圖片。
+                                            </p>
 
                                             <details className="border-t pt-2">
-                                                <summary className="text-xs font-bold text-gray-600 cursor-pointer">進階：手動設定圖片網址／路徑</summary>
+                                                <summary className="text-xs font-bold text-gray-600 cursor-pointer">進階：改用圖片網址</summary>
                                                 <input
                                                     type="text"
                                                     value={editForm.image || ''}
                                                     onChange={e => handleChange('image', e.target.value)}
-                                                    placeholder="images/wines/L001.webp 或 https://..."
+                                                    placeholder="https://..."
                                                     className="w-full border rounded-lg p-2.5 focus:border-km-blue outline-none text-sm text-gray-600 mt-2"
                                                 />
-                                                <p className="text-[11px] text-gray-400 mt-1">保留網址輸入是為了相容舊資料。新圖片建議使用上方工具處理後，放到 GitHub 的 images/wines/。</p>
+                                                <p className="text-[11px] text-gray-400 mt-1">保留網址輸入是為了相容舊資料；新圖片建議直接用上方按鈕上傳。</p>
                                             </details>
                                         </div>
                                     </div>
