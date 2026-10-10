@@ -1059,15 +1059,8 @@
 
         const shareOrDownloadBlob = async (blob, filename, shareData = {}) => {
             if (!blob) return false;
-            const file = new File([blob], filename, { type: 'image/png' });
-            try {
-                if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-                    await navigator.share({ ...shareData, files: [file] });
-                    return true;
-                }
-            } catch (e) {
-                if (e?.name === 'AbortError') return false;
-            }
+
+            // 依你的需求：點「產生分享圖片」後直接下載，不再先跳系統分享視窗。
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
@@ -1075,7 +1068,7 @@
             document.body.appendChild(a);
             a.click();
             a.remove();
-            URL.revokeObjectURL(url);
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
             return true;
         };
 
@@ -1909,7 +1902,7 @@
                 setShareStatus('產生分享圖片中…');
                 const blob = await makeShareBlob({ results: { ...results, top3: visibleItems } });
                 await shareOrDownloadBlob(blob, '怡亨選酒推薦.png', { title: '我的怡亨選酒結果', text: '這是我用怡亨選酒小幫手找到的酒款' });
-                setShareStatus('分享圖片已準備完成');
+                setShareStatus('分享圖片已開始下載');
                 setTimeout(() => setShareStatus(''), 2200);
             };
 
@@ -2118,7 +2111,7 @@
                         text: '怡亨選酒小幫手酒款分享卡',
                         url: getWineShareUrl(normalized.id)
                     });
-                    setShareStatus('分享圖片已準備完成');
+                    setShareStatus('分享圖片已開始下載');
                 } catch (error) {
                     console.error('產生分享圖片失敗：', error);
                     setShareStatus('分享圖片產生失敗，請確認圖片讀取權限');
