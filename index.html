@@ -1967,7 +1967,8 @@
         };
 
         const Catalog = ({ setView, liquors, setSelectedLiquor, onFlavorClick, inquiryIds, onToggleInquiry, compareIds, onToggleCompare, favoriteIds, onToggleFavorite, recentIds }) => {
-            const [filter, setFilter] = React.useState('all');
+            const [selectedFilters, setSelectedFilters] = React.useState([]);
+            const [selectedFlavors, setSelectedFlavors] = React.useState([]);
             const [searchQuery, setSearchQuery] = React.useState('');
 
             const categoryOptions = [
@@ -1984,6 +1985,21 @@
             ];
 
             const getArray = (value) => Array.isArray(value) ? value : [];
+
+            const flavorOptions = React.useMemo(() => {
+                const counts = {};
+                liquors.map(normalizeLiquor).forEach(liquor => {
+                    getArray(liquor.tags?.flavor).forEach(flavor => {
+                        if (!flavor) return;
+                        counts[flavor] = (counts[flavor] || 0) + 1;
+                    });
+                });
+
+                const extras = Object.keys(counts).filter(flavor => !PRESET_FLAVORS.includes(flavor));
+                return [...PRESET_FLAVORS, ...extras]
+                    .filter(flavor => counts[flavor] > 0)
+                    .map(flavor => ({ id: flavor, label: flavor, count: counts[flavor] }));
+            }, [liquors]);
             const getSearchText = (rawLiquor) => {
                 const liquor = normalizeLiquor(rawLiquor);
                 const tags = liquor.tags || {};
@@ -1991,14 +2007,15 @@
                 return [liquor.name, liquor.series, liquor.age, liquor.type, getStockStatus(liquor), liquor.abv, `${liquor.abv}%`, liquor.volume, `${liquor.volume}ml`, ...getArray(tags.target), ...getArray(tags.purpose), ...getArray(tags.experience), ...getArray(tags.style), ...getArray(tags.attributes), ...getArray(tags.flavor), ...getArray(tags.taste), tags.sizeCategory, text.shortIntro, text.fullIntro, text.tastingNotes, text.story, text.reason].filter(Boolean).join(' ').toLowerCase();
             };
 
-            const matchesCategory = (rawLiquor) => {
+            const matchesSingleCategory = (rawLiquor, filterId) => {
                 const liquor = normalizeLiquor(rawLiquor);
                 const tags = liquor.tags || {};
                 const purpose = getArray(tags.purpose);
                 const experience = getArray(tags.experience);
                 const style = getArray(tags.style);
                 const searchText = getSearchText(liquor);
-                switch (filter) {
+
+                switch (filterId) {
                     case 'favorites': return favoriteIds.includes(liquor.id);
                     case 'gift': return purpose.includes('送禮');
                     case 'self': return purpose.includes('自飲');
@@ -2012,24 +2029,54 @@
                 }
             };
 
+            const toggleFilter = (filterId) => {
+                if (filterId === 'all') {
+                    setSelectedFilters([]);
+                    return;
+                }
+                setSelectedFilters(current =>
+                    current.includes(filterId)
+                        ? current.filter(id => id !== filterId)
+                        : [...current, filterId]
+                );
+            };
+
+            const toggleFlavor = (flavor) => {
+                setSelectedFlavors(current =>
+                    current.includes(flavor)
+                        ? current.filter(item => item !== flavor)
+                        : [...current, flavor]
+                );
+            };
+
             const filteredLiquors = React.useMemo(() => {
                 const keywords = searchQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
                 return liquors.map(normalizeLiquor).filter((liquor) => {
-                    if (!matchesCategory(liquor)) return false;
+                    // 分類多選採「同時符合」。
+                    if (selectedFilters.length && !selectedFilters.every(filterId => matchesSingleCategory(liquor, filterId))) {
+                        return false;
+                    }
+
+                    // 風味多選也採「同時符合」；例如勾「鮮果＋花蜜」會找兩種都有的酒。
+                    const liquorFlavors = getArray(liquor.tags?.flavor);
+                    if (selectedFlavors.length && !selectedFlavors.every(flavor => liquorFlavors.includes(flavor))) {
+                        return false;
+                    }
+
                     if (!keywords.length) return true;
                     const haystack = getSearchText(liquor);
                     return keywords.every(keyword => haystack.includes(keyword));
                 });
-            }, [liquors, filter, searchQuery, favoriteIds]);
+            }, [liquors, selectedFilters, selectedFlavors, searchQuery, favoriteIds]);
 
             const recentLiquors = recentIds.map(id => liquors.find(l => l.id === id)).filter(Boolean).slice(0, 5);
             const viewDetail = (liquor) => { setSelectedLiquor(liquor); setView('detail'); };
-            const hasActiveSearch = searchQuery.trim().length > 0 || filter !== 'all';
+            const hasActiveSearch = searchQuery.trim().length > 0 || selectedFilters.length > 0 || selectedFlavors.length > 0;
 
             return (
                 <div className="max-w-4xl mx-auto px-4 py-8 pb-28">
                     <div className="flex justify-between items-center mb-5">
-                        <div><h2 className="text-2xl font-serif font-bold text-km-blue">所有酒款</h2><p className="text-xs text-gray-500 mt-1">搜尋酒名、類型、年份、酒精度、風味、口感與用途</p></div>
+                        <div><h2 className="text-2xl font-serif font-bold text-km-blue">所有酒款</h2><p className="text-xs text-gray-500 mt-1">搜尋酒名、類型、年份、酒精度、容量、風味、口感與用途</p></div>
                         <span className="text-sm text-gray-500 whitespace-nowrap">共 {filteredLiquors.length} 款</span>
                     </div>
 
@@ -2038,7 +2085,88 @@
                         <input type="search" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="搜尋酒名、陳高、桶陳、花蜜、58度、送禮……" className="w-full bg-white border-2 border-gray-200 rounded-xl pl-10 pr-10 py-3 text-sm outline-none focus:border-km-gold transition-colors shadow-sm" />
                         {searchQuery && <button type="button" onClick={() => setSearchQuery('')} className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-km-blue text-xl">&times;</button>}
                     </div>
-                    <div className="flex space-x-2 overflow-x-auto pb-3 mb-3">{categoryOptions.map(option => <button key={option.id} type="button" onClick={() => setFilter(option.id)} className={`px-4 py-2 rounded-full text-sm whitespace-nowrap transition-colors ${filter === option.id ? 'bg-km-blue text-white shadow-sm' : 'bg-white text-gray-600 border border-gray-300 hover:border-km-gold'}`}>{option.label}</button>)}</div>
+                    <div className="mb-3">
+                        <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-bold text-km-blue">分類可複選</span>
+                            {selectedFilters.length > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedFilters([])}
+                                    className="text-xs text-km-red underline underline-offset-2"
+                                >
+                                    清除分類
+                                </button>
+                            )}
+                        </div>
+                        <div className="flex space-x-2 overflow-x-auto pb-3">
+                            {categoryOptions.map(option => {
+                                const isAll = option.id === 'all';
+                                const isSelected = isAll ? selectedFilters.length === 0 : selectedFilters.includes(option.id);
+                                return (
+                                    <button
+                                        key={option.id}
+                                        type="button"
+                                        onClick={() => toggleFilter(option.id)}
+                                        className={`px-4 py-2 rounded-full text-sm whitespace-nowrap transition-colors inline-flex items-center gap-1.5 ${
+                                            isSelected
+                                                ? 'bg-km-blue text-white shadow-sm'
+                                                : 'bg-white text-gray-600 border border-gray-300 hover:border-km-gold'
+                                        }`}
+                                    >
+                                        {!isAll && <span className="text-xs">{isSelected ? '✓' : '□'}</span>}
+                                        {option.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        <p className="text-[11px] text-gray-400 mt-1">
+                            可同時勾選多個分類；結果會顯示「同時符合所有已勾分類」的酒款。
+                        </p>
+                    </div>
+
+                    <div className="mb-5 rounded-xl bg-white border border-gray-200 p-4 shadow-sm">
+                        <div className="flex items-center justify-between gap-3 mb-3">
+                            <div>
+                                <div className="text-sm font-bold text-km-blue">👃 依風味篩選</div>
+                                <div className="text-[11px] text-gray-400 mt-0.5">客人問「有沒有果香、木質、醬陳？」時可以直接勾選</div>
+                            </div>
+                            {selectedFlavors.length > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedFlavors([])}
+                                    className="text-xs text-km-red underline underline-offset-2 whitespace-nowrap"
+                                >
+                                    清除風味
+                                </button>
+                            )}
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                            {flavorOptions.map(option => {
+                                const isSelected = selectedFlavors.includes(option.id);
+                                return (
+                                    <button
+                                        key={option.id}
+                                        type="button"
+                                        onClick={() => toggleFlavor(option.id)}
+                                        className={`px-3 py-1.5 rounded-full text-xs transition-colors inline-flex items-center gap-1.5 ${
+                                            isSelected
+                                                ? 'bg-km-red text-white border border-km-red shadow-sm'
+                                                : 'bg-km-red/5 text-km-red border border-km-red/20 hover:bg-km-red/10'
+                                        }`}
+                                    >
+                                        <span>{isSelected ? '✓' : '□'}</span>
+                                        <span>{option.label}</span>
+                                        <span className={`${isSelected ? 'text-white/75' : 'text-gray-400'} text-[10px]`}>{option.count}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+
+                        <p className="text-[11px] text-gray-400 mt-3">
+                            可複選；多選時只顯示同時具有所有已勾風味的酒款。數字代表目前資料庫中具有該風味的酒款數。
+                        </p>
+                    </div>
 
                     {recentLiquors.length > 0 && !hasActiveSearch && (
                         <div className="mb-5 p-4 rounded-xl bg-white border border-km-gray">
@@ -2047,23 +2175,71 @@
                         </div>
                     )}
 
-                    {hasActiveSearch && <div className="flex items-center justify-between mb-5 text-xs text-gray-500"><span>{filter !== 'all' && <>分類：<span className="font-bold text-km-blue">{categoryOptions.find(item => item.id === filter)?.label}</span></>}{filter !== 'all' && searchQuery.trim() && <span className="mx-1">·</span>}{searchQuery.trim() && <>搜尋：<span className="font-bold text-km-blue">「{searchQuery.trim()}」</span></>}</span><button type="button" onClick={() => { setFilter('all'); setSearchQuery(''); }} className="text-km-red underline underline-offset-2">清除條件</button></div>}
+                    {hasActiveSearch && (
+                        <div className="flex items-center justify-between mb-5 text-xs text-gray-500 gap-3">
+                            <span className="min-w-0">
+                                {selectedFilters.length > 0 && (
+                                    <>
+                                        分類：
+                                        <span className="font-bold text-km-blue">
+                                            {selectedFilters
+                                                .map(id => categoryOptions.find(item => item.id === id)?.label)
+                                                .filter(Boolean)
+                                                .join(' ＋ ')}
+                                        </span>
+                                    </>
+                                )}
+                                {selectedFilters.length > 0 && selectedFlavors.length > 0 && <span className="mx-1">·</span>}
+                                {selectedFlavors.length > 0 && (
+                                    <>
+                                        風味：
+                                        <span className="font-bold text-km-red">
+                                            {selectedFlavors.join(' ＋ ')}
+                                        </span>
+                                    </>
+                                )}
+                                {(selectedFilters.length > 0 || selectedFlavors.length > 0) && searchQuery.trim() && <span className="mx-1">·</span>}
+                                {searchQuery.trim() && (
+                                    <>
+                                        搜尋：
+                                        <span className="font-bold text-km-blue">「{searchQuery.trim()}」</span>
+                                    </>
+                                )}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => { setSelectedFilters([]); setSelectedFlavors([]); setSearchQuery(''); }}
+                                className="text-km-red underline underline-offset-2 whitespace-nowrap"
+                            >
+                                清除條件
+                            </button>
+                        </div>
+                    )}
 
                     {filteredLiquors.length === 0 ? (
-                        <div className="km-card text-center py-14 px-6"><div className="text-4xl mb-3">🔎</div><h3 className="font-bold text-km-blue mb-2">目前找不到符合條件的酒款</h3><p className="text-sm text-gray-500 mb-5">可以換一個關鍵字，或清除分類後再看看。</p><button type="button" onClick={() => { setFilter('all'); setSearchQuery(''); }} className="px-5 py-2.5 rounded-lg bg-km-blue text-white font-bold text-sm">顯示全部酒款</button></div>
+                        <div className="km-card text-center py-14 px-6"><div className="text-4xl mb-3">🔎</div><h3 className="font-bold text-km-blue mb-2">目前找不到符合條件的酒款</h3><p className="text-sm text-gray-500 mb-5">可以換一個關鍵字，或清除分類後再看看。</p><button type="button" onClick={() => { setSelectedFilters([]); setSelectedFlavors([]); setSearchQuery(''); }} className="px-5 py-2.5 rounded-lg bg-km-blue text-white font-bold text-sm">顯示全部酒款</button></div>
                     ) : (
                         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                             {filteredLiquors.map(liquor => (
                                 <div key={liquor.id} className="km-card flex flex-col h-full cursor-pointer hover:shadow-lg transition-shadow" onClick={() => viewDetail(liquor)}>
                                     <div className="bg-gray-100 h-44 flex-shrink-0 relative">
                                         <img src={liquor.image} alt={liquor.name} className="w-full h-full object-cover"/>
-                                        <div className="absolute bottom-2 right-2 bg-black/60 text-white text-[10px] px-2 py-0.5 rounded backdrop-blur-sm">{liquor.volume}ml</div>
                                         <div className={`absolute top-2 left-2 text-[10px] px-2 py-1 rounded-full ${getStockStatus(liquor) === '暫無' ? 'bg-gray-800/80 text-white' : getStockStatus(liquor) === '少量' ? 'bg-amber-500 text-white' : 'bg-white/90 text-km-blue'}`}>{getStockStatus(liquor)}</div>
                                         <button type="button" onClick={(e) => { e.stopPropagation(); onToggleFavorite(liquor.id); }} className="absolute top-2 right-2 w-8 h-8 rounded-full bg-white/90 shadow text-lg text-km-red">{favoriteIds.includes(liquor.id) ? '♥' : '♡'}</button>
                                     </div>
                                     <div className="p-4 flex flex-col flex-grow">
                                         <div className="text-[10px] text-gray-400 mb-1">{inferLiquorType(liquor)}</div>
                                         <h3 className="font-bold text-km-blue mb-2 line-clamp-2 min-h-[2.5rem]">{liquor.name}</h3>
+
+                                        <div className="flex flex-wrap gap-1.5 mb-3">
+                                            <span className="inline-flex items-center rounded-full bg-km-red/10 border border-km-red/30 text-km-red px-2.5 py-1 text-[11px] font-bold">
+                                                {liquor.abv}% Vol
+                                            </span>
+                                            <span className="inline-flex items-center rounded-full bg-km-blue/5 border border-km-blue/20 text-km-blue px-2.5 py-1 text-[11px] font-bold">
+                                                {liquor.volume}ml
+                                            </span>
+                                        </div>
+
                                         <div className="mb-3 flex flex-col items-start gap-2">
                                             <InquiryButton liquor={liquor} isInList={inquiryIds.includes(liquor.id)} onToggle={onToggleInquiry} size="small" />
                                             <CompareButton liquor={liquor} isCompared={compareIds.includes(liquor.id)} onToggle={onToggleCompare} size="small" />
@@ -2145,7 +2321,7 @@
                             <div><span className="text-xs font-bold text-blue-800 block mb-1.5">👅 口感體驗</span><div className="flex flex-wrap">{normalized.tags.taste.map(t => <Tag key={`d-tst-${t}`} text={t} type="taste" />)}</div></div>
                         </div>
 
-                        <div className="bg-km-white rounded-xl p-5 mb-8 border border-km-gold-light"><h4 className="font-bold text-km-blue mb-2">商品介紹</h4><p className="text-gray-700 leading-relaxed text-sm mb-5">{normalized.text.fullIntro || normalized.text.shortIntro}</p><h4 className="font-bold text-km-blue mb-2 pt-4 border-t border-km-gray">品飲筆記</h4><p className="text-gray-700 leading-relaxed text-sm">{normalized.text.tastingNotes}</p></div>
+                        <div className="bg-km-white rounded-xl p-5 mb-8 border border-km-gold-light"><h4 className="font-bold text-km-blue mb-2">商品介紹</h4><p className="text-gray-700 leading-relaxed text-sm mb-5">{normalized.text.fullIntro || normalized.text.shortIntro}</p><h4 className="font-bold text-km-blue mb-2 pt-4 border-t border-km-gray">品飲筆記</h4><p className="text-gray-700 leading-relaxed text-sm whitespace-pre-line">{normalized.text.tastingNotes}</p></div>
 
                         <div className="mb-8"><h3 className="text-lg font-bold text-km-blue mb-4 border-l-4 border-km-gold pl-2">適合對象與場合</h3><div className="flex flex-wrap gap-2">{normalized.tags.target.map(t => <span key={t} className="bg-gray-100 text-gray-700 px-3 py-1 rounded-full text-sm">{t}</span>)}{normalized.tags.purpose.map(t => <span key={t} className="bg-blue-50 text-km-blue px-3 py-1 rounded-full text-sm">{t}</span>)}</div></div>
 
@@ -3773,6 +3949,23 @@
                         </button>
                     )}
 
+                    {view !== 'admin' && (
+                        <a
+                            href={OFFICIAL_LINE_URL}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label="加入怡亨酒舖官方 LINE 詢問"
+                            title="官方 LINE 詢問"
+                            style={{ bottom: inquiryItems.length > 0 && view !== 'quiz' ? '5.25rem' : '1.25rem' }}
+                            className="fixed right-4 z-[89] bg-[#06C755] text-white rounded-full shadow-xl px-4 py-3 font-bold text-sm flex items-center gap-2 hover:bg-[#05b04c] active:scale-95 transition-all"
+                        >
+                            <svg className="w-5 h-5 fill-current shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.63 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.63-.63h2.386c.346 0 .627.285.627.63 0 .349-.281.63-.63.63H17.61v1.125h1.755zm-3.855 3.016c0 .27-.174.51-.432.596-.064.021-.133.031-.199.031-.211 0-.391-.09-.51-.25l-2.443-3.317v2.94c0 .344-.279.629-.631.629-.346 0-.626-.285-.626-.629V8.108c0-.27.173-.51.43-.595.06-.023.136-.033.194-.033.195 0 .375.084.495.235l2.472 3.344V8.108c0-.345.281-.63.63-.63.348 0 .63.285.63.63v4.771zm-5.741 0c0 .344-.282.629-.631.629-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.63-.63.346 0 .628.285.628.63v4.771zm-2.466.629H4.917c-.345 0-.63-.285-.63-.629V8.108c0-.345.285-.63.63-.63.348 0 .63.285.63.63v4.141h1.756c.348 0 .629.283.629.63 0 .344-.282.629-.629.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.766.038 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314"/>
+                            </svg>
+                            <span className="whitespace-nowrap">LINE 詢問</span>
+                        </a>
+                    )}
+
                     <FlavorModal flavorKey={activeFlavor} onClose={() => setActiveFlavor(null)} />
 
                     {showInquiryList && (
@@ -3795,9 +3988,13 @@
                     )}
 
                     {view !== 'admin' && view !== 'quiz' && (
-                        <footer className="bg-km-blue text-km-white text-center py-6 text-sm mt-auto">
-                            <p className="opacity-70 mb-2">理性飲酒，喝酒不開車，安全有保障。</p>
-                            <p className="opacity-50">© 2026 怡亨選酒小幫手</p>
+                        <footer className="bg-km-blue text-km-white text-center py-7 px-5 text-sm mt-auto">
+                            <p className="font-bold mb-2">怡亨酒舖｜金門在地高粱酒選酒服務</p>
+                            <p className="opacity-70 text-xs leading-6 mb-2">
+                                酒款、價格與庫存請以門市或官方 LINE 最新資訊為準。
+                            </p>
+                            <p className="opacity-70 text-xs mb-2">禁止酒駕｜未滿十八歲禁止飲酒</p>
+                            <p className="opacity-45 text-xs">© 2026 怡亨選酒小幫手</p>
                         </footer>
                     )}
                 </div>
